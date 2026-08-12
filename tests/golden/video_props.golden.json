@@ -1,0 +1,13 @@
+{
+  "onScreenHook": "Wait, THIS is why it works",
+  "captions": [
+    { "word": "Here's", "start": 0.0, "end": 0.4 },
+    { "word": "the", "start": 0.4, "end": 0.58 },
+    { "word": "thing", "start": 0.58, "end": 0.92 }
+  ],
+  "voiceoverStaticPath": "generated/1-0/voice.wav",
+  "durationSecs": 28.0,
+  "brandName": "Acme",
+  "palette": ["#111111", "#F5F5F5", "#FF5A1F"],
+  "brollStaticPaths": []
+}

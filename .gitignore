@@ -15,6 +15,7 @@ htmlcov/
 node_modules/
 video-renderer/dist/
 video-renderer/.remotion/
+video-renderer/public/generated/
 
 # Portable dev toolchain (node, ffmpeg) downloaded by Makefile, no sudo needed
 .tools/
