@@ -1,1 +1,32 @@
 .obsidian/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node / Remotion
+node_modules/
+video-renderer/dist/
+video-renderer/.remotion/
+
+# Runtime state - never committed
+var/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Assets are large binaries, tracked via LICENSES.md provenance not git by default
+assets/*
+!assets/LICENSES.md
+
+# OS
+.DS_Store

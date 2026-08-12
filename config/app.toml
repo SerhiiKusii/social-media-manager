@@ -1,0 +1,47 @@
+# Global, non-secret defaults. Per-brand values in brands/*.toml override these.
+
+[ingest]
+apify_monthly_cu_cap = 500
+scrape_actor_timeout_secs = 120
+
+[virality]
+min_views = 100_000
+max_age_hours = 96
+min_views_per_follower = 3.0
+min_engagement_rate = 0.03
+min_duration_secs = 8
+max_duration_secs = 90
+max_items_per_run = 3
+
+[dedupe]
+simhash_hamming_threshold = 3
+simhash_window_days = 30
+audio_cooldown_days = 14
+
+[intelligence]
+llm_backend = "fixture"          # fixture | anthropic ; overridden by TRENDSTEALER_LLM_BACKEND
+model = "claude-opus-5"
+max_tokens = 16000
+max_revisions = 3
+
+[tts]
+backend = "piper"
+target_lufs = -16.0
+sample_rate_hz = 48000
+
+[render]
+concurrency = "half-cpu"
+bundle_cache_dir = "var/bundle"
+
+[publish]
+mode = "dry_run"                 # dry_run | live ; overridden by TRENDSTEALER_PUBLISH_MODE
+max_posts_per_day = 2
+max_posts_per_day_ceiling = 3
+min_gap_minutes = 240
+
+[review_dashboard]
+host = "127.0.0.1"
+port = 5000
+
+[worker]
+lease_ttl_seconds = 600

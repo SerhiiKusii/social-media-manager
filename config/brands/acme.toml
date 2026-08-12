@@ -1,0 +1,31 @@
+# Per-brand config. Committed (no secrets). Secrets resolve via env as
+# IG_ACCESS_TOKEN__ACME with unsuffixed IG_ACCESS_TOKEN as fallback.
+
+[brand]
+id = "acme"
+name = "Acme"
+product_brief = """
+Replace with a real product brief: what Acme sells, who it's for, tone of
+voice, and the single most important thing every video should communicate.
+"""
+palette = ["#111111", "#F5F5F5", "#FF5A1F"]
+hashtags = ["#acme"]
+
+[accounts]
+instagram_business_account_id_env = "IG_BUSINESS_ACCOUNT_ID__ACME"
+
+[posting_windows]
+# 24h local time windows the publisher is allowed to post within.
+windows = ["09:00-11:00", "17:00-20:00"]
+timezone = "America/New_York"
+
+[sources]
+# Accounts / hashtags to monitor for trend-jacking candidates.
+tiktok_seed_accounts = []
+instagram_seed_hashtags = []
+
+[virality]
+# Overrides for config/app.toml [virality]; omit keys to inherit global default.
+
+[publish]
+# Overrides for config/app.toml [publish]; omit keys to inherit global default.
