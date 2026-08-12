@@ -1,0 +1,21 @@
+[Unit]
+Description=Trend Stealer review dashboard
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=trendstealer
+WorkingDirectory=/opt/trendstealer
+EnvironmentFile=/etc/trendstealer/env
+ExecStart=/opt/trendstealer/.venv/bin/trendstealer review serve
+Restart=on-failure
+Nice=10
+CPUWeight=50
+MemoryMax=1G
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/trendstealer/var
+
+[Install]
+WantedBy=multi-user.target

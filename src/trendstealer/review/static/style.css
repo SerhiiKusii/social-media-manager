@@ -1,0 +1,6 @@
+body { font-family: sans-serif; max-width: 900px; margin: 2rem auto; color: #222; }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #ddd; }
+nav a { margin-right: 1rem; }
+textarea { width: 100%; min-height: 4rem; }
+button { margin-right: 0.5rem; margin-top: 0.5rem; }

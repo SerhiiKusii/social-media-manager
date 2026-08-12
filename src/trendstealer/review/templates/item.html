@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Item #{{ item['item_id'] }} — {{ item['status'] }}</h2>
+<p>Platform: {{ item['platform'] }}</p>
+<p>Trend caption: {{ item['trend_caption'] or '(none)' }}</p>
+
+{% if item['current_revision_id'] %}
+<video controls src="{{ url_for('media_video', item_id=item['item_id']) }}" style="max-width: 360px;"></video>
+{% endif %}
+
+<h3>Revisions</h3>
+<ul>
+{% for r in item['revisions'] %}
+  <li>
+    #{{ r['revision_no'] }} — {{ r['on_screen_hook'] }}
+    {% if r['change_request'] %}(change requested: {{ r['change_request'] }}){% endif %}
+  </li>
+{% else %}
+  <li>No revisions yet.</li>
+{% endfor %}
+</ul>
+
+{% if item['status'] == 'pending_review' %}
+<form method="post" action="{{ url_for('item_action', item_id=item['item_id']) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="version" value="{{ item['version'] }}">
+  <textarea name="note" placeholder="Note (used as the change request if requesting changes)"></textarea>
+  <div>
+    <button type="submit" name="action" value="approve">Approve</button>
+    <button type="submit" name="action" value="reject">Reject</button>
+    <button type="submit" name="action" value="request_changes">Request changes</button>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

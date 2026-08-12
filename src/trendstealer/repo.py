@@ -180,6 +180,139 @@ def list_status_events(conn: sqlite3.Connection, item_id: int) -> list[sqlite3.R
     ).fetchall()
 
 
+# --- revisions ----------------------------------------------------------
+
+
+def create_revision(
+    conn: sqlite3.Connection,
+    *,
+    content_item_id: int,
+    revision_no: int,
+    prompt_version: str,
+    on_screen_hook: str,
+    spoken_script: str,
+    change_request: str | None = None,
+    script_plan_json: str | None = None,
+    voiceover_path: str | None = None,
+    captions_path: str | None = None,
+    video_path: str | None = None,
+    render_ms: int | None = None,
+    llm_input_tokens: int | None = None,
+    llm_output_tokens: int | None = None,
+    llm_cache_read_tokens: int | None = None,
+) -> int:
+    with transaction(conn):
+        cur = conn.execute(
+            """
+            INSERT INTO revisions (
+                content_item_id, revision_no, prompt_version, change_request,
+                script_plan_json, on_screen_hook, spoken_script, voiceover_path,
+                captions_path, video_path, render_ms,
+                llm_input_tokens, llm_output_tokens, llm_cache_read_tokens
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                content_item_id,
+                revision_no,
+                prompt_version,
+                change_request,
+                script_plan_json,
+                on_screen_hook,
+                spoken_script,
+                voiceover_path,
+                captions_path,
+                video_path,
+                render_ms,
+                llm_input_tokens,
+                llm_output_tokens,
+                llm_cache_read_tokens,
+            ),
+        )
+        assert cur.lastrowid is not None
+        return cur.lastrowid
+
+
+def set_current_revision(conn: sqlite3.Connection, item_id: int, revision_id: int) -> None:
+    with transaction(conn):
+        conn.execute(
+            "UPDATE content_items SET current_revision_id = ? WHERE id = ?",
+            (revision_id, item_id),
+        )
+
+
+def list_revisions(conn: sqlite3.Connection, content_item_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM revisions WHERE content_item_id = ? ORDER BY revision_no",
+        (content_item_id,),
+    ).fetchall()
+
+
+def get_latest_revision_no(conn: sqlite3.Connection, content_item_id: int) -> int | None:
+    row = conn.execute(
+        "SELECT MAX(revision_no) AS n FROM revisions WHERE content_item_id = ?",
+        (content_item_id,),
+    ).fetchone()
+    return None if row["n"] is None else int(row["n"])
+
+
+# --- review dashboard queries -------------------------------------------
+
+
+def list_items_for_review(
+    conn: sqlite3.Connection,
+    status: ContentStatus,
+    *,
+    limit: int = 20,
+    offset: int = 0,
+) -> list[sqlite3.Row]:
+    """Items in the given status, oldest trend first — a stale trend-jack
+    sitting in the review queue is worse than one that never got made."""
+    return conn.execute(
+        """
+        SELECT
+            ci.id AS item_id, ci.status, ci.version, ci.created_at,
+            t.platform, t.caption AS trend_caption, t.posted_at,
+            r.revision_no, r.on_screen_hook, r.spoken_script, r.video_path
+        FROM content_items ci
+        JOIN trends t ON t.id = ci.trend_id
+        LEFT JOIN revisions r ON r.id = ci.current_revision_id
+        WHERE ci.status = ?
+        ORDER BY COALESCE(t.posted_at, t.scraped_at) ASC
+        LIMIT ? OFFSET ?
+        """,
+        (str(status), limit, offset),
+    ).fetchall()
+
+
+def count_items_by_status_value(conn: sqlite3.Connection, status: ContentStatus) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM content_items WHERE status = ?", (str(status),)
+    ).fetchone()
+    return int(row["n"])
+
+
+def get_item_detail(conn: sqlite3.Connection, item_id: int) -> dict[str, object] | None:
+    row = conn.execute(
+        """
+        SELECT
+            ci.id AS item_id, ci.status, ci.version, ci.brand_id, ci.trend_id,
+            ci.current_revision_id, ci.created_at, ci.updated_at,
+            t.platform, t.caption AS trend_caption, t.transcript AS trend_transcript,
+            t.source_url, t.posted_at
+        FROM content_items ci
+        JOIN trends t ON t.id = ci.trend_id
+        WHERE ci.id = ?
+        """,
+        (item_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        **dict(row),
+        "revisions": [dict(r) for r in list_revisions(conn, item_id)],
+    }
+
+
 # --- api_usage --------------------------------------------------------------
 
 

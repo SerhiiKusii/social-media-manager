@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<p>{{ total }} item(s) pending review.</p>
+<table>
+  <thead><tr><th>Item</th><th>Platform</th><th>Hook</th><th>Posted</th></tr></thead>
+  <tbody>
+  {% for it in items %}
+    <tr>
+      <td><a href="{{ url_for('item_detail', item_id=it['item_id']) }}">#{{ it['item_id'] }}</a></td>
+      <td>{{ it['platform'] }}</td>
+      <td>{{ it['on_screen_hook'] or '' }}</td>
+      <td>{{ it['posted_at'] or '' }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="4">Nothing waiting on review.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<nav>
+  {% if page > 1 %}<a href="{{ url_for('queue', page=page - 1) }}">&laquo; Previous</a>{% endif %}
+  {% if page * page_size < total %}<a href="{{ url_for('queue', page=page + 1) }}">Next &raquo;</a>{% endif %}
+</nav>
+{% endblock %}

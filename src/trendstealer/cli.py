@@ -3,13 +3,15 @@ from __future__ import annotations
 import typer
 
 from trendstealer import db, repo
-from trendstealer.config import list_brand_ids, load_brand_config
+from trendstealer.config import get_settings, list_brand_ids, load_brand_config
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 db_app = typer.Typer(no_args_is_help=True)
 brands_app = typer.Typer(no_args_is_help=True)
+review_app = typer.Typer(no_args_is_help=True)
 app.add_typer(db_app, name="db")
 app.add_typer(brands_app, name="brands")
+app.add_typer(review_app, name="review")
 
 
 @db_app.command("upgrade")
@@ -64,6 +66,30 @@ def status() -> None:
     width = max(len(k) for k in counts)
     for state, n in sorted(counts.items()):
         typer.echo(f"{state.ljust(width)}  {n}")
+
+
+@review_app.command("serve")
+def review_serve(host: str | None = None, port: int | None = None) -> None:
+    """Run the review dashboard (production WSGI server, not Flask's dev server)."""
+    from waitress import serve as waitress_serve
+
+    from trendstealer.review.app import create_app
+
+    settings = get_settings()
+    if not settings.review_dashboard_token:
+        typer.echo("REVIEW_DASHBOARD_TOKEN is not set", err=True)
+        raise typer.Exit(code=1)
+
+    bind_host = host or settings.review_dashboard_host
+    bind_port = port or settings.review_dashboard_port
+    flask_app = create_app(
+        db_path=settings.db_path_abs,
+        render_root=settings.var_dir_abs / "work",
+        token=settings.review_dashboard_token,
+        secret_key=settings.flask_secret_key,
+        allowed_hosts={f"{bind_host}:{bind_port}", f"localhost:{bind_port}"},
+    )
+    waitress_serve(flask_app, host=bind_host, port=bind_port)
 
 
 def main() -> None:

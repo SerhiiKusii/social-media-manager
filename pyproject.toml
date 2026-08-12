@@ -62,5 +62,5 @@ plugins = ["pydantic.mypy"]
 exclude = ["video-renderer"]
 
 [[tool.mypy.overrides]]
-module = ["faster_whisper.*", "piper.*"]
+module = ["faster_whisper.*", "piper.*", "flask_wtf.*", "waitress.*"]
 ignore_missing_imports = true
