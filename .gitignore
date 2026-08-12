@@ -16,6 +16,12 @@ node_modules/
 video-renderer/dist/
 video-renderer/.remotion/
 
+# Portable dev toolchain (node, ffmpeg) downloaded by Makefile, no sudo needed
+.tools/
+
+# Piper TTS voice models (downloaded, not committed)
+var/piper-voices/
+
 # Runtime state - never committed
 var/
 
