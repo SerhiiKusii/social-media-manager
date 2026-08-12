@@ -78,7 +78,11 @@ class ViralityConfig(BaseModel):
 
 
 class DedupeConfig(BaseModel):
-    simhash_hamming_threshold: int = 3
+    # Empirically, unweighted word-3-gram SimHash on spoken-script-length
+    # text (~30-100 words) puts a 1-2 word edit at Hamming distance ~9-11
+    # and unrelated content at ~30+ (see tests/unit/test_ingest.py) -- a
+    # threshold of 3 only catches near-exact duplicates.
+    simhash_hamming_threshold: int = 12
     simhash_window_days: int = 30
     audio_cooldown_days: int = 14
 

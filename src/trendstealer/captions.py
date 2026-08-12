@@ -41,6 +41,14 @@ def transcribe_word_timings(audio_path: Path, *, model_size: str = "base.en") ->
     return timings
 
 
+def transcribe_text(audio_path: Path, *, model_size: str = "base.en") -> str:
+    if not audio_path.exists():
+        raise FileNotFoundError(audio_path)
+    model = _get_model(model_size)
+    segments, _info = model.transcribe(str(audio_path), word_timestamps=False)
+    return " ".join(segment.text.strip() for segment in segments).strip()
+
+
 def save_captions(timings: list[WordTiming], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps([asdict(t) for t in timings], indent=2))

@@ -1,0 +1,62 @@
+[
+  {
+    "id": "tt-survivor-1",
+    "text": "the productivity hack nobody talks about",
+    "transcript": "wait for it this simple morning routine trick changed everything for me try it today",
+    "playCount": 500000,
+    "diggCount": 40000,
+    "commentCount": 2000,
+    "shareCount": 1000,
+    "authorMeta": { "name": "trendaccount1", "fans": 50000 },
+    "musicMeta": { "musicId": "sound-alpha" },
+    "videoMeta": { "duration": 25 },
+    "webVideoUrl": "https://tiktok.com/@trendaccount1/video/tt-survivor-1",
+    "videoUrl": "https://cdn.example.com/tt-survivor-1.mp4",
+    "createTime": 1893456000
+  },
+  {
+    "id": "tt-near-dup-1",
+    "text": "same trick different account",
+    "transcript": "wait for it this simple morning routine trick changed everything for me try it now",
+    "playCount": 480000,
+    "diggCount": 38000,
+    "commentCount": 1900,
+    "shareCount": 900,
+    "authorMeta": { "name": "trendaccount2", "fans": 48000 },
+    "musicMeta": { "musicId": "sound-beta" },
+    "videoMeta": { "duration": 24 },
+    "webVideoUrl": "https://tiktok.com/@trendaccount2/video/tt-near-dup-1",
+    "videoUrl": "https://cdn.example.com/tt-near-dup-1.mp4",
+    "createTime": 1893456000
+  },
+  {
+    "id": "tt-low-views-1",
+    "text": "a mediocre video",
+    "transcript": "just a regular unremarkable clip about nothing special today",
+    "playCount": 5000,
+    "diggCount": 100,
+    "commentCount": 5,
+    "shareCount": 1,
+    "authorMeta": { "name": "smallaccount", "fans": 2000 },
+    "musicMeta": { "musicId": "sound-gamma" },
+    "videoMeta": { "duration": 20 },
+    "webVideoUrl": "https://tiktok.com/@smallaccount/video/tt-low-views-1",
+    "videoUrl": "https://cdn.example.com/tt-low-views-1.mp4",
+    "createTime": 1893456000
+  },
+  {
+    "id": "tt-survivor-2",
+    "text": "second unrelated survivor",
+    "transcript": "an entirely different topic about kitchen gadgets that save time cooking dinner fast",
+    "playCount": 300000,
+    "diggCount": 25000,
+    "commentCount": 1500,
+    "shareCount": 700,
+    "authorMeta": { "name": "trendaccount3", "fans": 30000 },
+    "musicMeta": { "musicId": "sound-delta" },
+    "videoMeta": { "duration": 22 },
+    "webVideoUrl": "https://tiktok.com/@trendaccount3/video/tt-survivor-2",
+    "videoUrl": "https://cdn.example.com/tt-survivor-2.mp4",
+    "createTime": 1893456000
+  }
+]

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import cast
 
 from trendstealer.db import transaction
+from trendstealer.ingest.simhash import to_sqlite_int64
 from trendstealer.states import ContentStatus, StaleStateError, validate_transition
 
 # --- brands -------------------------------------------------------------
@@ -26,9 +27,7 @@ def upsert_brand(conn: sqlite3.Connection, brand_key: str, name: str) -> int:
             """,
             (brand_key, name),
         )
-        row = conn.execute(
-            "SELECT id FROM brands WHERE brand_key = ?", (brand_key,)
-        ).fetchone()
+        row = conn.execute("SELECT id FROM brands WHERE brand_key = ?", (brand_key,)).fetchone()
     return int(row["id"])
 
 
@@ -56,6 +55,111 @@ def get_trend_by_platform_id(
             (platform, platform_video_id),
         ).fetchone(),
     )
+
+
+def insert_trend(
+    conn: sqlite3.Connection,
+    *,
+    brand_id: int,
+    scrape_run_id: int | None,
+    platform: str,
+    platform_video_id: str,
+    source_account: str | None = None,
+    source_url: str | None = None,
+    caption: str | None = None,
+    transcript: str | None = None,
+    views: int | None = None,
+    likes: int | None = None,
+    comments: int | None = None,
+    shares: int | None = None,
+    source_follower_count: int | None = None,
+    duration_secs: float | None = None,
+    posted_at: str | None = None,
+    audio_id: str | None = None,
+    transcript_simhash: int | None = None,
+    virality_score: float | None = None,
+    skip_reason: str | None = None,
+) -> int:
+    """Natural-key dedupe layer 1: UNIQUE(platform, platform_video_id) means
+    a trend already seen on a prior ingest run is silently skipped."""
+    stored_simhash = None if transcript_simhash is None else to_sqlite_int64(transcript_simhash)
+    with transaction(conn):
+        cur = conn.execute(
+            """
+            INSERT OR IGNORE INTO trends (
+                brand_id, scrape_run_id, platform, platform_video_id, source_account,
+                source_url, caption, transcript, views, likes, comments, shares,
+                source_follower_count, duration_secs, posted_at, scraped_at,
+                audio_id, transcript_simhash, virality_score, skip_reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                      strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?, ?, ?, ?)
+            """,
+            (
+                brand_id,
+                scrape_run_id,
+                platform,
+                platform_video_id,
+                source_account,
+                source_url,
+                caption,
+                transcript,
+                views,
+                likes,
+                comments,
+                shares,
+                source_follower_count,
+                duration_secs,
+                posted_at,
+                audio_id,
+                stored_simhash,
+                virality_score,
+                skip_reason,
+            ),
+        )
+        if cur.rowcount == 0:
+            row = conn.execute(
+                "SELECT id FROM trends WHERE platform = ? AND platform_video_id = ?",
+                (platform, platform_video_id),
+            ).fetchone()
+            return int(row["id"])
+        assert cur.lastrowid is not None
+        return cur.lastrowid
+
+
+def create_scrape_run(
+    conn: sqlite3.Connection, *, brand_id: int, platform: str, actor_id: str
+) -> int:
+    with transaction(conn):
+        cur = conn.execute(
+            """
+            INSERT INTO scrape_runs (brand_id, platform, actor_id, started_at, status)
+            VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 'running')
+            """,
+            (brand_id, platform, actor_id),
+        )
+        assert cur.lastrowid is not None
+        return cur.lastrowid
+
+
+def finish_scrape_run(
+    conn: sqlite3.Connection,
+    scrape_run_id: int,
+    *,
+    status: str,
+    items_scraped: int,
+    compute_units: float | None = None,
+    error: str | None = None,
+) -> None:
+    with transaction(conn):
+        conn.execute(
+            """
+            UPDATE scrape_runs
+            SET status = ?, items_scraped = ?, compute_units = ?, error = ?,
+                finished_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE id = ?
+            """,
+            (status, items_scraped, compute_units, error, scrape_run_id),
+        )
 
 
 # --- content_items ----------------------------------------------------------
@@ -93,6 +197,24 @@ def get_content_item(conn: sqlite3.Connection, item_id: int) -> sqlite3.Row | No
         "sqlite3.Row | None",
         conn.execute("SELECT * FROM content_items WHERE id = ?", (item_id,)).fetchone(),
     )
+
+
+def try_create_content_item(
+    conn: sqlite3.Connection,
+    *,
+    brand_id: int,
+    trend_id: int,
+    initial_status: ContentStatus = ContentStatus.QUEUED,
+) -> int | None:
+    """Dedupe layer 2: UNIQUE(brand_id, trend_id) on content_items. Returns
+    None instead of raising when this (brand, trend) pair already has an
+    item, so ingest can treat it as "already queued" rather than an error."""
+    try:
+        return create_content_item(
+            conn, brand_id=brand_id, trend_id=trend_id, initial_status=initial_status
+        )
+    except sqlite3.IntegrityError:
+        return None
 
 
 def count_content_items_by_status(conn: sqlite3.Connection) -> dict[str, int]:

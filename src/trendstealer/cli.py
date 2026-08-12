@@ -3,15 +3,17 @@ from __future__ import annotations
 import typer
 
 from trendstealer import db, repo
-from trendstealer.config import get_settings, list_brand_ids, load_brand_config
+from trendstealer.config import get_settings, list_brand_ids, load_app_config, load_brand_config
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 db_app = typer.Typer(no_args_is_help=True)
 brands_app = typer.Typer(no_args_is_help=True)
 review_app = typer.Typer(no_args_is_help=True)
+ingest_app = typer.Typer(no_args_is_help=True)
 app.add_typer(db_app, name="db")
 app.add_typer(brands_app, name="brands")
 app.add_typer(review_app, name="review")
+app.add_typer(ingest_app, name="ingest")
 
 
 @db_app.command("upgrade")
@@ -90,6 +92,44 @@ def review_serve(host: str | None = None, port: int | None = None) -> None:
         allowed_hosts={f"{bind_host}:{bind_port}", f"localhost:{bind_port}"},
     )
     waitress_serve(flask_app, host=bind_host, port=bind_port)
+
+
+@ingest_app.command("run")
+def ingest_run(brand_key: str, dry_run: bool = False) -> None:
+    """Scrape trending videos for a brand and queue survivors of the virality gate."""
+    from trendstealer.commands.ingest import run_ingest
+    from trendstealer.ingest.apify_backend import LiveApifyBackend
+    from trendstealer.ingest.backend import ApifyBackend
+    from trendstealer.ingest.fixture_backend import ApifyFixtureBackend
+
+    settings = get_settings()
+    app_config = load_app_config()
+    brand = load_brand_config(brand_key, app_config=app_config)
+
+    conn = db.connect()
+    brand_id = repo.upsert_brand(conn, brand_key, brand.brand.name)
+
+    backend: ApifyBackend
+    if settings.apify_mode == "live":
+        if not settings.apify_api_token:
+            typer.echo("APIFY_API_TOKEN is not set", err=True)
+            raise typer.Exit(code=1)
+        backend = LiveApifyBackend(settings.apify_api_token)
+    else:
+        backend = ApifyFixtureBackend()
+
+    summary = run_ingest(
+        conn,
+        brand=brand,
+        brand_id=brand_id,
+        app_config=app_config,
+        backend=backend,
+        dry_run=dry_run,
+    )
+    typer.echo(
+        f"trends_seen={summary.trends_seen} items_new={summary.items_new} "
+        f"items_skipped={summary.items_skipped}"
+    )
 
 
 def main() -> None:

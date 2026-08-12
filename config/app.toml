@@ -14,7 +14,8 @@ max_duration_secs = 90
 max_items_per_run = 3
 
 [dedupe]
-simhash_hamming_threshold = 3
+# See DedupeConfig in src/trendstealer/config.py for why this is 12, not 3.
+simhash_hamming_threshold = 12
 simhash_window_days = 30
 audio_cooldown_days = 14
 
