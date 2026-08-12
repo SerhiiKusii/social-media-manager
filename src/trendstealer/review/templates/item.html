@@ -28,8 +28,9 @@
   <div>
     <button type="submit" name="action" value="approve">Approve</button>
     <button type="submit" name="action" value="reject">Reject</button>
-    <button type="submit" name="action" value="request_changes">Request changes</button>
+    <button type="submit" name="action" value="request_changes" {% if revision_cap_reached %}disabled{% endif %}>Request changes</button>
   </div>
+  {% if revision_cap_reached %}<p>Revision cap reached — approve or reject this item.</p>{% endif %}
 </form>
 {% endif %}
 {% endblock %}

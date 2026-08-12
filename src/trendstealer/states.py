@@ -57,10 +57,16 @@ DASHBOARD_WRITABLE_STATES: frozenset[ContentStatus] = frozenset(
 # States the worker is allowed to claim a lease on and act from.
 # Priority order matters: revision requests jump the queue ahead of fresh
 # items, and script_ready lets a crashed worker resume without re-synthesizing.
+# SYNTHESIZING/RENDERING are included last, gated by lease expiry only (a
+# worker holds an unexpired lease on those while genuinely in progress) --
+# they let a worker that crashed mid-stage be retried by the next tick
+# instead of leaving the item stuck with no route back to a stable state.
 WORKER_CLAIMABLE_STATES: tuple[ContentStatus, ...] = (
     ContentStatus.CHANGES_REQUESTED,
     ContentStatus.QUEUED,
     ContentStatus.SCRIPT_READY,
+    ContentStatus.SYNTHESIZING,
+    ContentStatus.RENDERING,
 )
 
 MAX_REVISIONS = 3

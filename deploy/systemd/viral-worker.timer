@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Trend Stealer worker every 2 minutes
+
+[Timer]
+OnUnitInactiveSec=120
+AccuracySec=30
+Persistent=false
+
+[Install]
+WantedBy=timers.target

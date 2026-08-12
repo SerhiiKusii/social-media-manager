@@ -13,7 +13,12 @@ from typing import cast
 
 from trendstealer.db import transaction
 from trendstealer.ingest.simhash import to_sqlite_int64
-from trendstealer.states import ContentStatus, StaleStateError, validate_transition
+from trendstealer.states import (
+    WORKER_CLAIMABLE_STATES,
+    ContentStatus,
+    StaleStateError,
+    validate_transition,
+)
 
 # --- brands -------------------------------------------------------------
 
@@ -54,6 +59,13 @@ def get_trend_by_platform_id(
             "SELECT * FROM trends WHERE platform = ? AND platform_video_id = ?",
             (platform, platform_video_id),
         ).fetchone(),
+    )
+
+
+def get_trend(conn: sqlite3.Connection, trend_id: int) -> sqlite3.Row | None:
+    return cast(
+        "sqlite3.Row | None",
+        conn.execute("SELECT * FROM trends WHERE id = ?", (trend_id,)).fetchone(),
     )
 
 
@@ -217,6 +229,58 @@ def try_create_content_item(
         return None
 
 
+_CLAIM_PRIORITY_SQL = (
+    "CASE status "
+    + " ".join(f"WHEN '{status}' THEN {i}" for i, status in enumerate(WORKER_CLAIMABLE_STATES))
+    + " END"
+)
+
+
+def claim_lease(conn: sqlite3.Connection, *, owner: str, ttl_seconds: int) -> sqlite3.Row | None:
+    """Claim one claimable item, in WORKER_CLAIMABLE_STATES priority order,
+    for exclusive processing by `owner` for ttl_seconds. An item with an
+    unexpired lease is skipped (someone else is genuinely working it); one
+    whose lease has expired (crashed worker) is fair game again. Runs inside
+    a single BEGIN IMMEDIATE transaction, so the claim is race-free against
+    other callers without needing a portable atomic UPDATE...ORDER BY."""
+    placeholders = ",".join("?" for _ in WORKER_CLAIMABLE_STATES)
+    with transaction(conn):
+        row = conn.execute(
+            f"""
+            SELECT id FROM content_items
+            WHERE status IN ({placeholders})
+              AND (lease_expires_at IS NULL
+                   OR lease_expires_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            ORDER BY {_CLAIM_PRIORITY_SQL}, updated_at ASC
+            LIMIT 1
+            """,
+            [str(s) for s in WORKER_CLAIMABLE_STATES],
+        ).fetchone()
+        if row is None:
+            return None
+
+        item_id = row["id"]
+        conn.execute(
+            """
+            UPDATE content_items
+            SET lease_owner = ?,
+                lease_expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ? || ' seconds')
+            WHERE id = ?
+            """,
+            (owner, ttl_seconds, item_id),
+        )
+        claimed = conn.execute("SELECT * FROM content_items WHERE id = ?", (item_id,)).fetchone()
+    return cast("sqlite3.Row | None", claimed)
+
+
+def release_lease(conn: sqlite3.Connection, item_id: int) -> None:
+    with transaction(conn):
+        conn.execute(
+            "UPDATE content_items SET lease_owner = NULL, lease_expires_at = NULL WHERE id = ?",
+            (item_id,),
+        )
+
+
 def count_content_items_by_status(conn: sqlite3.Connection) -> dict[str, int]:
     rows = conn.execute(
         "SELECT status, COUNT(*) AS n FROM content_items GROUP BY status"
@@ -352,6 +416,33 @@ def create_revision(
         )
         assert cur.lastrowid is not None
         return cur.lastrowid
+
+
+def get_revision(conn: sqlite3.Connection, revision_id: int) -> sqlite3.Row | None:
+    return cast(
+        "sqlite3.Row | None",
+        conn.execute("SELECT * FROM revisions WHERE id = ?", (revision_id,)).fetchone(),
+    )
+
+
+def update_revision_render(
+    conn: sqlite3.Connection,
+    revision_id: int,
+    *,
+    voiceover_path: str,
+    captions_path: str,
+    video_path: str,
+    render_ms: int,
+) -> None:
+    with transaction(conn):
+        conn.execute(
+            """
+            UPDATE revisions
+            SET voiceover_path = ?, captions_path = ?, video_path = ?, render_ms = ?
+            WHERE id = ?
+            """,
+            (voiceover_path, captions_path, video_path, render_ms, revision_id),
+        )
 
 
 def set_current_revision(conn: sqlite3.Connection, item_id: int, revision_id: int) -> None:

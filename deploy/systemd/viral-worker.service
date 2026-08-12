@@ -1,0 +1,17 @@
+[Unit]
+Description=Trend Stealer worker (one unit of work per run)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=trendstealer
+WorkingDirectory=/opt/trendstealer
+EnvironmentFile=/etc/trendstealer/env
+ExecStart=/opt/trendstealer/.venv/bin/trendstealer worker run-once ${BRAND_KEY}
+Nice=10
+CPUWeight=50
+MemoryMax=6G
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/trendstealer/var

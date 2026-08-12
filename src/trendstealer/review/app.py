@@ -20,7 +20,12 @@ from werkzeug.wrappers import Response as WerkzeugResponse
 from trendstealer import db as db_module
 from trendstealer import repo
 from trendstealer.review.auth import check_allowed_host, check_bearer_token
-from trendstealer.states import ContentStatus, InvalidTransitionError, StaleStateError
+from trendstealer.states import (
+    MAX_REVISIONS,
+    ContentStatus,
+    InvalidTransitionError,
+    StaleStateError,
+)
 
 ACTION_TO_STATUS: dict[str, ContentStatus] = {
     "approve": ContentStatus.APPROVED,
@@ -105,7 +110,11 @@ def create_app(
         detail = repo.get_item_detail(conn, item_id)
         if detail is None:
             abort(404)
-        return render_template("item.html", item=detail)
+        latest_revision_no = repo.get_latest_revision_no(conn, item_id)
+        revision_cap_reached = (
+            latest_revision_no is not None and latest_revision_no >= MAX_REVISIONS
+        )
+        return render_template("item.html", item=detail, revision_cap_reached=revision_cap_reached)
 
     @app.route("/item/<int:item_id>/action", methods=["POST"])
     def item_action(item_id: int) -> WerkzeugResponse:
@@ -125,6 +134,12 @@ def create_app(
 
         note = request.form.get("note") or None
         to_status = ACTION_TO_STATUS[action]
+
+        if to_status == ContentStatus.CHANGES_REQUESTED:
+            latest_revision_no = repo.get_latest_revision_no(conn, item_id)
+            if latest_revision_no is not None and latest_revision_no >= MAX_REVISIONS:
+                abort(409)
+
         try:
             repo.transition(
                 conn,

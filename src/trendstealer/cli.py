@@ -10,10 +10,12 @@ db_app = typer.Typer(no_args_is_help=True)
 brands_app = typer.Typer(no_args_is_help=True)
 review_app = typer.Typer(no_args_is_help=True)
 ingest_app = typer.Typer(no_args_is_help=True)
+worker_app = typer.Typer(no_args_is_help=True)
 app.add_typer(db_app, name="db")
 app.add_typer(brands_app, name="brands")
 app.add_typer(review_app, name="review")
 app.add_typer(ingest_app, name="ingest")
+app.add_typer(worker_app, name="worker")
 
 
 @db_app.command("upgrade")
@@ -130,6 +132,54 @@ def ingest_run(brand_key: str, dry_run: bool = False) -> None:
         f"trends_seen={summary.trends_seen} items_new={summary.items_new} "
         f"items_skipped={summary.items_skipped}"
     )
+
+
+@worker_app.command("run-once")
+def worker_run_once(brand_key: str) -> None:
+    """Claim and fully process one item (synthesize/render/whatever stage
+    it's at). Prints nothing and exits 0 if there was nothing to claim."""
+    import fcntl
+    import os
+    import socket
+
+    from trendstealer.commands.worker import run_worker_once
+    from trendstealer.intelligence.synthesize import get_backend
+    from trendstealer.tts.piper import PiperBackend
+
+    settings = get_settings()
+    app_config = load_app_config()
+    brand = load_brand_config(brand_key, app_config=app_config)
+
+    lock_dir = settings.var_dir_abs / "locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_file = open(lock_dir / "worker.lock", "w")  # noqa: SIM115 - held for process lifetime
+    try:
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        typer.echo("another worker run is already in progress, skipping", err=True)
+        raise typer.Exit(code=0) from None
+
+    conn = db.connect()
+    llm_backend = get_backend(
+        settings.llm_backend,
+        model=app_config.intelligence.model,
+        max_tokens=app_config.intelligence.max_tokens,
+    )
+    tts_backend = PiperBackend(
+        target_lufs=app_config.tts.target_lufs, sample_rate_hz=app_config.tts.sample_rate_hz
+    )
+    worker_id = f"{socket.gethostname()}:{os.getpid()}"
+
+    item_id = run_worker_once(
+        conn,
+        brand=brand,
+        llm_backend=llm_backend,
+        tts_backend=tts_backend,
+        worker_id=worker_id,
+        lease_ttl_seconds=app_config.worker.lease_ttl_seconds,
+    )
+    if item_id is not None:
+        typer.echo(f"processed item {item_id}")
 
 
 def main() -> None:
