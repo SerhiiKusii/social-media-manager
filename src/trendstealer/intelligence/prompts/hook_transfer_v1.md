@@ -11,6 +11,8 @@ Source video caption (may be empty):
 
 {change_request_section}
 
+{hook_performance_section}
+
 Produce a ScriptPlan for the brand's product that:
 - opens with an on-screen hook using the same retention pattern as the source
 - has a spoken_script a text-to-speech voice will read aloud, 20-45 seconds

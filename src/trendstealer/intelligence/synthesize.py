@@ -26,6 +26,7 @@ def synthesize(
     transcript: str,
     caption: str | None = None,
     change_request: str | None = None,
+    hook_performance_note: str | None = None,
     prompt_version: str = DEFAULT_PROMPT_VERSION,
 ) -> SynthesizeResult:
     request = SynthesizeRequest(
@@ -34,5 +35,6 @@ def synthesize(
         caption=caption,
         prompt_version=prompt_version,
         change_request=change_request,
+        hook_performance_note=hook_performance_note,
     )
     return backend.synthesize(request)

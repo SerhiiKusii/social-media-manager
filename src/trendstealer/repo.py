@@ -7,10 +7,11 @@ and makes it possible to grep for every write against a given table.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import cast
+from typing import TypedDict, cast
 
 from trendstealer.db import transaction
 from trendstealer.ingest.simhash import to_sqlite_int64
@@ -672,3 +673,113 @@ def list_approved_items(conn: sqlite3.Connection, *, brand_id: int) -> list[sqli
         """,
         (brand_id, str(ContentStatus.APPROVED)),
     ).fetchall()
+
+
+# --- metrics -------------------------------------------------------------
+
+
+def list_publications_needing_snapshot(
+    conn: sqlite3.Connection, *, brand_id: int, min_age_hours: int, now: datetime
+) -> list[sqlite3.Row]:
+    """Published items with no snapshot in the last min_age_hours."""
+    cutoff = _format_ts(now - timedelta(hours=min_age_hours))
+    return conn.execute(
+        """
+        SELECT p.* FROM publications p
+        WHERE p.brand_id = ? AND p.status = 'published' AND p.platform_media_id IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM metrics_snapshots m
+              WHERE m.publication_id = p.id AND m.captured_at >= ?
+          )
+        ORDER BY p.published_at ASC
+        """,
+        (brand_id, cutoff),
+    ).fetchall()
+
+
+def create_metrics_snapshot(
+    conn: sqlite3.Connection,
+    *,
+    publication_id: int,
+    captured_at: datetime,
+    views: int | None = None,
+    likes: int | None = None,
+    comments: int | None = None,
+    shares: int | None = None,
+    saves: int | None = None,
+    reach: int | None = None,
+    conversions: int | None = None,
+) -> int:
+    with transaction(conn):
+        cur = conn.execute(
+            """
+            INSERT INTO metrics_snapshots (
+                publication_id, captured_at, views, likes, comments, shares, saves, reach,
+                conversions
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                publication_id,
+                _format_ts(captured_at),
+                views,
+                likes,
+                comments,
+                shares,
+                saves,
+                reach,
+                conversions,
+            ),
+        )
+        assert cur.lastrowid is not None
+        return cur.lastrowid
+
+
+class HookPatternStat(TypedDict):
+    hook_pattern: str
+    avg_views: float
+    sample_size: int
+
+
+def get_hook_pattern_performance(
+    conn: sqlite3.Connection, *, brand_id: int
+) -> list[HookPatternStat]:
+    """Joins each publication's most recent metrics_snapshot back to the
+    revision that produced it, groups by hook_pattern (a field inside
+    revisions.script_plan_json, not its own column), and averages views.
+    This is the M9 feedback loop: which hook patterns work for *this*
+    account, fed back into the synthesize prompt."""
+    rows = conn.execute(
+        """
+        SELECT r.script_plan_json, m.views
+        FROM metrics_snapshots m
+        JOIN publications p ON p.id = m.publication_id
+        JOIN revisions r ON r.id = p.revision_id
+        WHERE p.brand_id = ?
+          AND m.captured_at = (
+              SELECT MAX(m2.captured_at) FROM metrics_snapshots m2
+              WHERE m2.publication_id = m.publication_id
+          )
+        """,
+        (brand_id,),
+    ).fetchall()
+
+    views_by_pattern: dict[str, list[int]] = {}
+    for row in rows:
+        if row["script_plan_json"] is None or row["views"] is None:
+            continue
+        try:
+            plan = json.loads(row["script_plan_json"])
+        except ValueError:
+            continue
+        pattern = plan.get("hook_pattern")
+        if pattern:
+            views_by_pattern.setdefault(pattern, []).append(row["views"])
+
+    return [
+        {
+            "hook_pattern": pattern,
+            "avg_views": sum(views_list) / len(views_list),
+            "sample_size": len(views_list),
+        }
+        for pattern, views_list in views_by_pattern.items()
+    ]

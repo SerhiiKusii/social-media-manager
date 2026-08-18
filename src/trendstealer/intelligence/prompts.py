@@ -27,4 +27,5 @@ def render_prompt(request: SynthesizeRequest) -> str:
         transcript=request.transcript,
         caption=request.caption or "",
         change_request_section=change_request_section,
+        hook_performance_section=request.hook_performance_note or "",
     )

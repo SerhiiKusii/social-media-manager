@@ -12,12 +12,14 @@ review_app = typer.Typer(no_args_is_help=True)
 ingest_app = typer.Typer(no_args_is_help=True)
 worker_app = typer.Typer(no_args_is_help=True)
 publish_app = typer.Typer(no_args_is_help=True)
+metrics_app = typer.Typer(no_args_is_help=True)
 app.add_typer(db_app, name="db")
 app.add_typer(brands_app, name="brands")
 app.add_typer(review_app, name="review")
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(worker_app, name="worker")
 app.add_typer(publish_app, name="publish")
+app.add_typer(metrics_app, name="metrics")
 
 
 @db_app.command("upgrade")
@@ -231,6 +233,36 @@ def publish_run(brand_key: str) -> None:
             f"item {outcome.item_id}: {outcome.status}"
             + (f" ({outcome.reason})" if outcome.reason else "")
         )
+
+
+@metrics_app.command("run")
+def metrics_run(brand_key: str) -> None:
+    """Snapshot Instagram insights for published items due for a refresh."""
+    import httpx
+
+    from trendstealer.commands.metrics import run_metrics_once
+    from trendstealer.metrics.instagram_insights import MediaInsights, fetch_media_insights
+
+    settings = get_settings()
+    app_config = load_app_config()
+    brand = load_brand_config(brand_key, app_config=app_config)
+
+    conn = db.connect()
+    brand_id = repo.upsert_brand(conn, brand_key, brand.brand.name)
+    access_token = brand.instagram_access_token()
+
+    if settings.publish_mode == "live" and access_token:
+        client = httpx.Client(timeout=30.0)
+
+        def fetch(media_id: str) -> MediaInsights:
+            return fetch_media_insights(media_id=media_id, access_token=access_token, client=client)
+    else:
+
+        def fetch(media_id: str) -> MediaInsights:
+            return MediaInsights()
+
+    count = run_metrics_once(conn, brand_id=brand_id, fetch_insights=fetch)
+    typer.echo(f"recorded {count} snapshot(s)")
 
 
 def main() -> None:

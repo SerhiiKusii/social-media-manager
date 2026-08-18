@@ -21,6 +21,7 @@ from trendstealer import repo
 from trendstealer.captions import save_captions, transcribe_word_timings
 from trendstealer.config import BrandConfig, get_settings
 from trendstealer.intelligence.backend import LLMBackend
+from trendstealer.intelligence.feedback import format_hook_performance
 from trendstealer.intelligence.synthesize import synthesize
 from trendstealer.logging import get_logger
 from trendstealer.render.props import build_render_props
@@ -133,12 +134,16 @@ def _run_synthesis(
             (e["note"] for e in reversed(events) if e["to_status"] == "changes_requested"), None
         )
 
+    hook_stats = repo.get_hook_pattern_performance(conn, brand_id=item["brand_id"])
+    hook_performance_note = format_hook_performance(hook_stats)
+
     result = synthesize(
         backend,
         brand_brief=brand.brand.product_brief,
         transcript=trend["transcript"] or trend["caption"] or "",
         caption=trend["caption"],
         change_request=change_request,
+        hook_performance_note=hook_performance_note,
         prompt_version=prompt_version,
     )
     plan = result.script_plan

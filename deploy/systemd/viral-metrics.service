@@ -1,0 +1,15 @@
+[Unit]
+Description=Trend Stealer metrics snapshotter
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=trendstealer
+WorkingDirectory=/opt/trendstealer
+EnvironmentFile=/etc/trendstealer/env
+ExecStart=/opt/trendstealer/.venv/bin/trendstealer metrics run ${BRAND_KEY}
+Nice=10
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/trendstealer/var

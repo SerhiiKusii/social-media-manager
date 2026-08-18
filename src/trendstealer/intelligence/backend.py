@@ -13,6 +13,7 @@ class SynthesizeRequest:
     prompt_version: str
     caption: str | None = None
     change_request: str | None = None  # None for revision 0, else the human's note
+    hook_performance_note: str | None = None  # M9 feedback loop, see intelligence/feedback.py
 
 
 @dataclass(frozen=True)
