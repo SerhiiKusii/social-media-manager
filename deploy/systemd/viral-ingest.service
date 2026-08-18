@@ -1,0 +1,17 @@
+[Unit]
+Description=Trend Stealer ingestion (scrape + virality gate + dedupe)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=trendstealer
+WorkingDirectory=/opt/trendstealer
+EnvironmentFile=/etc/trendstealer/env
+ExecStart=/opt/trendstealer/.venv/bin/trendstealer ingest run ${BRAND_KEY}
+Nice=10
+CPUWeight=50
+MemoryMax=2G
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/trendstealer/var

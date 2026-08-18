@@ -13,6 +13,7 @@ ingest_app = typer.Typer(no_args_is_help=True)
 worker_app = typer.Typer(no_args_is_help=True)
 publish_app = typer.Typer(no_args_is_help=True)
 metrics_app = typer.Typer(no_args_is_help=True)
+maintenance_app = typer.Typer(no_args_is_help=True)
 app.add_typer(db_app, name="db")
 app.add_typer(brands_app, name="brands")
 app.add_typer(review_app, name="review")
@@ -20,6 +21,7 @@ app.add_typer(ingest_app, name="ingest")
 app.add_typer(worker_app, name="worker")
 app.add_typer(publish_app, name="publish")
 app.add_typer(metrics_app, name="metrics")
+app.add_typer(maintenance_app, name="maintenance")
 
 
 @db_app.command("upgrade")
@@ -263,6 +265,77 @@ def metrics_run(brand_key: str) -> None:
 
     count = run_metrics_once(conn, brand_id=brand_id, fetch_insights=fetch)
     typer.echo(f"recorded {count} snapshot(s)")
+
+
+@maintenance_app.command("gc")
+def maintenance_gc(max_pending_review_hours: int = 48, retention_days: int = 30) -> None:
+    """Auto-archive stale pending_review items and delete render artifacts
+    for old terminal-state items."""
+    from trendstealer.commands.maintenance import (
+        auto_archive_stale_pending_review,
+        gc_render_artifacts,
+    )
+
+    settings = get_settings()
+    conn = db.connect()
+    archived = auto_archive_stale_pending_review(conn, max_age_hours=max_pending_review_hours)
+    removed = gc_render_artifacts(
+        conn, render_root=settings.var_dir_abs / "work", retention_days=retention_days
+    )
+    typer.echo(f"archived {archived} stale item(s), removed {removed} render artifact dir(s)")
+
+
+@maintenance_app.command("backup")
+def maintenance_backup(keep_last: int = 14) -> None:
+    """Back up the database via SQLite's online backup API (safe under WAL,
+    unlike a plain file copy)."""
+    from trendstealer.commands.maintenance import backup_database
+
+    settings = get_settings()
+    result = backup_database(
+        settings.db_path_abs, settings.var_dir_abs / "backups", keep_last=keep_last
+    )
+    typer.echo(f"backed up to {result.path} ({result.size_bytes} bytes)")
+
+
+@maintenance_app.command("check-token")
+def maintenance_check_token(brand_key: str, warn_days: int = 7) -> None:
+    """Check IG access token validity/expiry via Graph API's debug_token."""
+    import httpx
+
+    from trendstealer.commands.maintenance import check_token_expiry
+
+    app_config = load_app_config()
+    brand = load_brand_config(brand_key, app_config=app_config)
+    access_token = brand.instagram_access_token()
+    if not access_token:
+        typer.echo("no IG access token configured for this brand", err=True)
+        raise typer.Exit(code=1)
+
+    status = check_token_expiry(access_token=access_token, client=httpx.Client(timeout=30.0))
+    if not status.is_valid:
+        typer.echo("token is INVALID", err=True)
+        raise typer.Exit(code=1)
+    if status.days_remaining is not None and status.days_remaining < warn_days:
+        typer.echo(f"token expires in {status.days_remaining:.1f} day(s) -- refresh it", err=True)
+        raise typer.Exit(code=1)
+    typer.echo("token OK")
+
+
+@app.command("healthz")
+def healthz() -> None:
+    """Exit 0 if the DB is reachable and migrations are current, else 1."""
+    try:
+        conn = db.connect()
+        pending = db.check(conn)
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"unhealthy: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if pending:
+        typer.echo(f"unhealthy: pending migrations {pending}", err=True)
+        raise typer.Exit(code=1)
+    typer.echo("ok")
 
 
 def main() -> None:

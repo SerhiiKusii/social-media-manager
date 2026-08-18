@@ -16,9 +16,15 @@ whitelist, which is the other half of the same guard.
                        |                |                                        |
                        v                v                          (revision_no+1, cap 3)
                   publishing        archived                                     |
-                    |    |                                                       v
-                    v    v                                                 synthesizing
+                    |    |                ^                                      v
+                    v    v                |                                synthesizing
               published  publish_failed --> approved (retry) | rejected
+
+    pending_review -> archived also happens directly: maintenance
+    auto-archives items sitting in review past a staleness threshold
+    (see commands/maintenance.py) -- a stale trend-jack is worse than no
+    post, and this bypasses the human decision entirely rather than
+    routing through a synthetic "rejected".
 """
 
 from __future__ import annotations
@@ -77,7 +83,12 @@ TRANSITIONS: dict[ContentStatus, frozenset[ContentStatus]] = {
     ContentStatus.SCRIPT_READY: frozenset({ContentStatus.RENDERING}),
     ContentStatus.RENDERING: frozenset({ContentStatus.PENDING_REVIEW}),
     ContentStatus.PENDING_REVIEW: frozenset(
-        {ContentStatus.APPROVED, ContentStatus.REJECTED, ContentStatus.CHANGES_REQUESTED}
+        {
+            ContentStatus.APPROVED,
+            ContentStatus.REJECTED,
+            ContentStatus.CHANGES_REQUESTED,
+            ContentStatus.ARCHIVED,  # maintenance auto-archive on staleness only
+        }
     ),
     ContentStatus.APPROVED: frozenset({ContentStatus.PUBLISHING}),
     ContentStatus.REJECTED: frozenset({ContentStatus.ARCHIVED}),

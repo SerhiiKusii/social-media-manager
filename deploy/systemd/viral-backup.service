@@ -1,0 +1,12 @@
+[Unit]
+Description=Trend Stealer nightly database backup
+
+[Service]
+Type=oneshot
+User=trendstealer
+WorkingDirectory=/opt/trendstealer
+EnvironmentFile=/etc/trendstealer/env
+ExecStart=/opt/trendstealer/.venv/bin/trendstealer maintenance backup
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/trendstealer/var

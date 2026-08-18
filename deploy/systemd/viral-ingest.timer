@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Trend Stealer ingestion 4x/day
+
+[Timer]
+OnCalendar=*-*-* 02,08,14,20:00:00
+RandomizedDelaySec=900
+Persistent=true
+
+[Install]
+WantedBy=timers.target

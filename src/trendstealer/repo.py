@@ -783,3 +783,43 @@ def get_hook_pattern_performance(
         }
         for pattern, views_list in views_by_pattern.items()
     ]
+
+
+# --- maintenance -----------------------------------------------------------
+
+
+def list_stale_pending_review(
+    conn: sqlite3.Connection, *, max_age_hours: int, now: datetime
+) -> list[sqlite3.Row]:
+    """pending_review items sitting past max_age_hours -- a stale
+    trend-jack is worse than no post, so these are auto-archive candidates
+    rather than left to rot in the queue."""
+    cutoff = _format_ts(now - timedelta(hours=max_age_hours))
+    return conn.execute(
+        """
+        SELECT * FROM content_items
+        WHERE status = ? AND updated_at < ?
+        """,
+        (str(ContentStatus.PENDING_REVIEW), cutoff),
+    ).fetchall()
+
+
+def list_terminal_items_older_than(
+    conn: sqlite3.Connection, *, retention_days: int, now: datetime
+) -> list[sqlite3.Row]:
+    """Items in a terminal state whose render artifacts (var/work/<id>/)
+    are safe to garbage-collect."""
+    cutoff = _format_ts(now - timedelta(days=retention_days))
+    placeholders = ",".join("?" for _ in range(3))
+    return conn.execute(
+        f"""
+        SELECT * FROM content_items
+        WHERE status IN ({placeholders}) AND updated_at < ?
+        """,
+        (
+            str(ContentStatus.PUBLISHED),
+            str(ContentStatus.ARCHIVED),
+            str(ContentStatus.REJECTED),
+            cutoff,
+        ),
+    ).fetchall()

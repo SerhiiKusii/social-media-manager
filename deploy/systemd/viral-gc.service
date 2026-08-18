@@ -1,0 +1,12 @@
+[Unit]
+Description=Trend Stealer retention GC (auto-archive stale reviews, prune old render artifacts)
+
+[Service]
+Type=oneshot
+User=trendstealer
+WorkingDirectory=/opt/trendstealer
+EnvironmentFile=/etc/trendstealer/env
+ExecStart=/opt/trendstealer/.venv/bin/trendstealer maintenance gc
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/trendstealer/var
