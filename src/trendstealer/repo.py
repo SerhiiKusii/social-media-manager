@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import cast
 
 from trendstealer.db import transaction
@@ -547,3 +548,127 @@ def record_api_usage(
             """,
             (brand_id, service, operation, units, unit_kind, cost_usd),
         )
+
+
+# --- accounts ----------------------------------------------------------
+
+
+def upsert_account(
+    conn: sqlite3.Connection,
+    *,
+    brand_id: int,
+    platform: str,
+    platform_account_id: str,
+    display_name: str | None = None,
+) -> int:
+    with transaction(conn):
+        conn.execute(
+            """
+            INSERT INTO accounts (brand_id, platform, platform_account_id, display_name)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT (brand_id, platform, platform_account_id)
+            DO UPDATE SET display_name = excluded.display_name
+            """,
+            (brand_id, platform, platform_account_id, display_name),
+        )
+        row = conn.execute(
+            """
+            SELECT id FROM accounts
+            WHERE brand_id = ? AND platform = ? AND platform_account_id = ?
+            """,
+            (brand_id, platform, platform_account_id),
+        ).fetchone()
+    return int(row["id"])
+
+
+# --- publications --------------------------------------------------------
+
+_TS_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
+
+
+def _format_ts(dt: datetime) -> str:
+    return dt.astimezone(UTC).strftime(_TS_FORMAT)[:-3] + "Z"
+
+
+def _parse_ts(value: str) -> datetime:
+    return datetime.strptime(value, _TS_FORMAT).replace(tzinfo=UTC)
+
+
+def create_publication(
+    conn: sqlite3.Connection,
+    *,
+    content_item_id: int,
+    revision_id: int,
+    brand_id: int,
+    platform: str,
+    account_id: int,
+    idempotency_key: str,
+    platform_media_id: str | None = None,
+    permalink: str | None = None,
+    status: str = "published",
+    error: str | None = None,
+    published_at: datetime | None = None,
+) -> int:
+    """UNIQUE(idempotency_key) means a double-publish attempt raises
+    sqlite3.IntegrityError instead of posting twice."""
+    published_at = published_at or datetime.now(UTC)
+    with transaction(conn):
+        cur = conn.execute(
+            """
+            INSERT INTO publications (
+                content_item_id, revision_id, brand_id, platform, account_id,
+                idempotency_key, platform_media_id, permalink, published_at, status, error
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                content_item_id,
+                revision_id,
+                brand_id,
+                platform,
+                account_id,
+                idempotency_key,
+                platform_media_id,
+                permalink,
+                _format_ts(published_at),
+                status,
+                error,
+            ),
+        )
+        assert cur.lastrowid is not None
+        return cur.lastrowid
+
+
+def count_published_last_24h(conn: sqlite3.Connection, *, brand_id: int, now: datetime) -> int:
+    cutoff = _format_ts(now - timedelta(hours=24))
+    row = conn.execute(
+        """
+        SELECT COUNT(*) AS n FROM publications
+        WHERE brand_id = ? AND status = 'published' AND published_at >= ?
+        """,
+        (brand_id, cutoff),
+    ).fetchone()
+    return int(row["n"])
+
+
+def get_last_publication_time(conn: sqlite3.Connection, *, brand_id: int) -> datetime | None:
+    row = conn.execute(
+        """
+        SELECT published_at FROM publications
+        WHERE brand_id = ? AND status = 'published'
+        ORDER BY published_at DESC LIMIT 1
+        """,
+        (brand_id,),
+    ).fetchone()
+    return None if row is None else _parse_ts(row["published_at"])
+
+
+def list_approved_items(conn: sqlite3.Connection, *, brand_id: int) -> list[sqlite3.Row]:
+    """Oldest-approved-first, for the publisher's one-item-per-run pick."""
+    return conn.execute(
+        """
+        SELECT * FROM content_items
+        WHERE brand_id = ? AND status = ?
+        ORDER BY updated_at ASC
+        """,
+        (brand_id, str(ContentStatus.APPROVED)),
+    ).fetchall()

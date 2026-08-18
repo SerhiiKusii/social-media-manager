@@ -1,0 +1,15 @@
+[Unit]
+Description=Trend Stealer publisher (rate-gated, at most one item per run)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=trendstealer
+WorkingDirectory=/opt/trendstealer
+EnvironmentFile=/etc/trendstealer/env
+ExecStart=/opt/trendstealer/.venv/bin/trendstealer publish run ${BRAND_KEY}
+Nice=10
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/trendstealer/var

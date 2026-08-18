@@ -11,11 +11,13 @@ brands_app = typer.Typer(no_args_is_help=True)
 review_app = typer.Typer(no_args_is_help=True)
 ingest_app = typer.Typer(no_args_is_help=True)
 worker_app = typer.Typer(no_args_is_help=True)
+publish_app = typer.Typer(no_args_is_help=True)
 app.add_typer(db_app, name="db")
 app.add_typer(brands_app, name="brands")
 app.add_typer(review_app, name="review")
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(worker_app, name="worker")
+app.add_typer(publish_app, name="publish")
 
 
 @db_app.command("upgrade")
@@ -180,6 +182,55 @@ def worker_run_once(brand_key: str) -> None:
     )
     if item_id is not None:
         typer.echo(f"processed item {item_id}")
+
+
+@publish_app.command("run")
+def publish_run(brand_key: str) -> None:
+    """Rate-gate then publish at most one approved item to Instagram."""
+    from trendstealer.commands.publish import run_publish_once
+    from trendstealer.publish.base import DryRunPublisher
+    from trendstealer.publish.instagram import InstagramPublisher
+
+    settings = get_settings()
+    app_config = load_app_config()
+    brand = load_brand_config(brand_key, app_config=app_config)
+
+    conn = db.connect()
+    brand_id = repo.upsert_brand(conn, brand_key, brand.brand.name)
+
+    access_token = brand.instagram_access_token()
+    business_account_id = brand.instagram_business_account_id()
+
+    publisher: DryRunPublisher | InstagramPublisher
+    if settings.publish_mode == "live":
+        if not access_token or not business_account_id:
+            typer.echo("IG_ACCESS_TOKEN / IG_BUSINESS_ACCOUNT_ID are not set", err=True)
+            raise typer.Exit(code=1)
+        publisher = InstagramPublisher(business_account_id=business_account_id)
+    else:
+        publisher = DryRunPublisher()
+        access_token = access_token or "dry-run"
+        business_account_id = business_account_id or "dry-run-account"
+
+    account_id = repo.upsert_account(
+        conn, brand_id=brand_id, platform="instagram", platform_account_id=business_account_id
+    )
+
+    outcome = run_publish_once(
+        conn,
+        brand=brand,
+        brand_id=brand_id,
+        account_id=account_id,
+        publisher=publisher,
+        access_token=access_token,
+    )
+    if outcome is None:
+        typer.echo("nothing to publish this run")
+    else:
+        typer.echo(
+            f"item {outcome.item_id}: {outcome.status}"
+            + (f" ({outcome.reason})" if outcome.reason else "")
+        )
 
 
 def main() -> None:
