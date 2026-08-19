@@ -16,6 +16,7 @@ worker_app = typer.Typer(no_args_is_help=True)
 publish_app = typer.Typer(no_args_is_help=True)
 metrics_app = typer.Typer(no_args_is_help=True)
 maintenance_app = typer.Typer(no_args_is_help=True)
+assets_app = typer.Typer(no_args_is_help=True)
 app.add_typer(db_app, name="db")
 app.add_typer(brands_app, name="brands")
 app.add_typer(review_app, name="review")
@@ -24,6 +25,7 @@ app.add_typer(worker_app, name="worker")
 app.add_typer(publish_app, name="publish")
 app.add_typer(metrics_app, name="metrics")
 app.add_typer(maintenance_app, name="maintenance")
+app.add_typer(assets_app, name="assets")
 
 
 @db_app.command("upgrade")
@@ -359,6 +361,74 @@ def healthz() -> None:
         typer.echo(f"unhealthy: pending migrations {pending}", err=True)
         raise typer.Exit(code=1)
     typer.echo("ok")
+
+
+@assets_app.command("fetch-pexels")
+def assets_fetch_pexels(
+    query: str,
+    count: int = 5,
+    tags: str | None = None,
+) -> None:
+    """Download stock B-roll from Pexels and register it as cleared."""
+    from trendstealer.commands.assets import fetch_pexels_broll
+
+    settings = get_settings()
+    if not settings.pexels_api_key:
+        typer.echo("PEXELS_API_KEY is not set (free at https://www.pexels.com/api/)", err=True)
+        raise typer.Exit(code=1)
+
+    conn = db.connect()
+    summary = fetch_pexels_broll(
+        conn, query=query, api_key=settings.pexels_api_key, count=count, tags=tags
+    )
+    typer.echo(
+        f"found={summary.found} downloaded={summary.downloaded} registered={summary.registered}"
+    )
+
+
+@assets_app.command("add")
+def assets_add(
+    path: str,
+    kind: str = "video",
+    license: str = "unknown",  # noqa: A002 - matches the column name
+    tags: str | None = None,
+    attribution: str | None = None,
+    cleared: bool = False,
+) -> None:
+    """Register a file already under assets/ (own footage, licensed media)."""
+    from pathlib import Path as _Path
+
+    from trendstealer.commands.assets import register_local_asset
+
+    conn = db.connect()
+    try:
+        asset_id = register_local_asset(
+            conn,
+            path=_Path(path),
+            kind=kind,
+            license=license,
+            tags=tags,
+            attribution=attribution,
+            cleared_for_commercial=cleared,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"asset {asset_id}: {path} (cleared={cleared})")
+
+
+@assets_app.command("list")
+def assets_list(kind: str | None = None, all_assets: bool = False) -> None:
+    """Show registered assets, least-recently-used first."""
+    conn = db.connect()
+    rows = repo.list_assets(conn, kind=kind, cleared_only=not all_assets, limit=200)
+    if not rows:
+        typer.echo("no assets registered")
+        return
+    for row in rows:
+        flag = "cleared" if row["cleared_for_commercial"] else "UNCLEARED"
+        used = row["last_used_at"] or "never used"
+        typer.echo(f"{row['id']:>4}  {flag:<9}  {row['kind']:<5}  {row['path']}  ({used})")
 
 
 def main() -> None:

@@ -6,6 +6,7 @@ import pytest
 from trendstealer.captions import WordTiming
 from trendstealer.config import get_settings
 from trendstealer.render.props import (
+    IntroProps,
     UnclearedAssetPathError,
     build_render_props,
     stage_and_serialize,
@@ -76,10 +77,78 @@ def test_stage_and_serialize_copies_files_and_matches_golden_shape(tmp_path: Pat
         "brandName",
         "palette",
         "brollStaticPaths",
+        "intro",
     }
     assert remotion_props["voiceoverStaticPath"] == f"generated/{item_id}-0/voice.wav"
+    assert remotion_props["intro"] is None
 
     golden = json.loads(
         (Path(__file__).parents[1] / "golden" / "video_props.golden.json").read_text()
     )
     assert set(remotion_props) == set(golden)
+
+
+def test_stage_and_serialize_stages_intro_media_and_matches_the_intro_golden(
+    tmp_path: Path,
+) -> None:
+    item_id = 999996
+    work_dir = get_settings().var_dir_abs / "work" / str(item_id)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    (work_dir / "voice.wav").write_bytes(b"fake wav bytes")
+    (work_dir / "intro_voice.wav").write_bytes(b"fake intro wav")
+    (work_dir / "carlos.png").write_bytes(b"fake png")
+
+    props = build_render_props(
+        item_id=item_id,
+        revision_no=0,
+        on_screen_hook="Carlos approves",
+        captions=[WordTiming(word="Here's", start=0.0, end=0.4)],
+        voiceover_path=work_dir / "voice.wav",
+        duration_secs=28.0,
+        brand_name="Acme",
+        palette=["#111111", "#F5F5F5", "#FF5A1F"],
+        intro=IntroProps(
+            image_path=work_dir / "carlos.png",
+            title="Carlos approves",
+            duration_secs=5.0,
+            voiceover_path=work_dir / "intro_voice.wav",
+        ),
+    )
+
+    remotion_props = stage_and_serialize(props)
+    intro = remotion_props["intro"]
+    assert intro is not None
+    assert intro["imageStaticPath"] == f"generated/{item_id}-0/intro.png"
+    assert intro["voiceoverStaticPath"] == f"generated/{item_id}-0/intro_voice.wav"
+    assert intro["durationSecs"] == 5.0
+
+    golden = json.loads(
+        (Path(__file__).parents[1] / "golden" / "video_props_intro.golden.json").read_text()
+    )
+    assert set(remotion_props) == set(golden)
+    assert set(intro) == set(golden["intro"])
+
+
+def test_intro_media_outside_the_boundary_is_refused() -> None:
+    """An intro must not be a loophole around the compliance boundary."""
+    item_id = 999995
+    work_dir = get_settings().var_dir_abs / "work" / str(item_id)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    (work_dir / "voice.wav").write_bytes(b"fake wav bytes")
+
+    with pytest.raises(UnclearedAssetPathError):
+        build_render_props(
+            item_id=item_id,
+            revision_no=0,
+            on_screen_hook="hook",
+            captions=[],
+            voiceover_path=work_dir / "voice.wav",
+            duration_secs=10.0,
+            brand_name="Acme",
+            palette=[],
+            intro=IntroProps(
+                image_path=Path("/etc/passwd"),
+                title="nope",
+                duration_secs=5.0,
+            ),
+        )

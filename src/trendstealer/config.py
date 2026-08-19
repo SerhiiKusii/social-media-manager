@@ -27,6 +27,7 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str | None = Field(None, alias="ANTHROPIC_API_KEY")
     apify_api_token: str | None = Field(None, alias="APIFY_API_TOKEN")
+    pexels_api_key: str | None = Field(None, alias="PEXELS_API_KEY")
 
     review_dashboard_token: str | None = Field(None, alias="REVIEW_DASHBOARD_TOKEN")
     review_dashboard_host: str = Field("127.0.0.1", alias="REVIEW_DASHBOARD_HOST")

@@ -614,6 +614,138 @@ def upsert_account(
     return int(row["id"])
 
 
+# --- assets --------------------------------------------------------------
+
+
+def upsert_asset(
+    conn: sqlite3.Connection,
+    *,
+    path: str,
+    kind: str,
+    license: str,  # noqa: A002 - matches the column name
+    tags: str | None = None,
+    attribution: str | None = None,
+    cleared_for_commercial: bool = False,
+    brand_id: int | None = None,
+) -> int:
+    """Register a media file the renderer is allowed to use.
+
+    `cleared_for_commercial` is the gate preflight() enforces before
+    publishing -- an asset with an unclear licence can still be rendered
+    for local review, but never posted.
+    """
+    with transaction(conn):
+        conn.execute(
+            """
+            INSERT INTO assets (brand_id, path, kind, tags, license, attribution,
+                                cleared_for_commercial)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (path) DO UPDATE SET
+                kind = excluded.kind,
+                tags = excluded.tags,
+                license = excluded.license,
+                attribution = excluded.attribution,
+                cleared_for_commercial = excluded.cleared_for_commercial
+            """,
+            (
+                brand_id,
+                path,
+                kind,
+                tags,
+                license,
+                attribution,
+                1 if cleared_for_commercial else 0,
+            ),
+        )
+        row = conn.execute("SELECT id FROM assets WHERE path = ?", (path,)).fetchone()
+    return int(row["id"])
+
+
+def get_asset_by_path(conn: sqlite3.Connection, path: str) -> sqlite3.Row | None:
+    row: sqlite3.Row | None = conn.execute(
+        "SELECT * FROM assets WHERE path = ?", (path,)
+    ).fetchone()
+    return row
+
+
+def list_assets(
+    conn: sqlite3.Connection,
+    *,
+    kind: str | None = None,
+    cleared_only: bool = True,
+    tag: str | None = None,
+    limit: int = 100,
+) -> list[sqlite3.Row]:
+    """Candidate assets, least-recently-used first.
+
+    The ordering is the recency penalty: an asset that has never been used
+    (last_used_at IS NULL) sorts ahead of one used yesterday, so a small
+    B-roll library rotates instead of showing the same clip every time.
+    """
+    clauses = []
+    params: list[object] = []
+    if kind is not None:
+        clauses.append("kind = ?")
+        params.append(kind)
+    if cleared_only:
+        clauses.append("cleared_for_commercial = 1")
+    if tag is not None:
+        clauses.append("(',' || REPLACE(COALESCE(tags,''), ' ', '') || ',') LIKE ?")
+        params.append(f"%,{tag},%")
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    params.append(limit)
+    return conn.execute(
+        f"""
+        SELECT * FROM assets
+        {where}
+        ORDER BY (last_used_at IS NOT NULL), last_used_at ASC, id ASC
+        LIMIT ?
+        """,
+        params,
+    ).fetchall()
+
+
+def touch_asset_used(
+    conn: sqlite3.Connection, asset_id: int, *, when: datetime | None = None
+) -> None:
+    with transaction(conn):
+        conn.execute(
+            "UPDATE assets SET last_used_at = ? WHERE id = ?",
+            (_format_ts(when or datetime.now(UTC)), asset_id),
+        )
+
+
+def record_item_assets(
+    conn: sqlite3.Connection, *, revision_id: int, asset_ids: list[int], role: str
+) -> None:
+    """Provenance: exactly which assets went into this revision's render."""
+    with transaction(conn):
+        for asset_id in asset_ids:
+            conn.execute(
+                """
+                INSERT INTO item_assets (revision_id, asset_id, role)
+                VALUES (?, ?, ?)
+                ON CONFLICT (revision_id, asset_id, role) DO NOTHING
+                """,
+                (revision_id, asset_id, role),
+            )
+
+
+def list_uncleared_assets_for_revision(
+    conn: sqlite3.Connection, revision_id: int
+) -> list[sqlite3.Row]:
+    """Assets in this render whose licence isn't cleared -- preflight()
+    refuses to publish while this is non-empty."""
+    return conn.execute(
+        """
+        SELECT a.* FROM item_assets ia
+        JOIN assets a ON a.id = ia.asset_id
+        WHERE ia.revision_id = ? AND a.cleared_for_commercial = 0
+        """,
+        (revision_id,),
+    ).fetchall()
+
+
 # --- publications --------------------------------------------------------
 
 _TS_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"

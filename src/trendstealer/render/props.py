@@ -40,6 +40,20 @@ def _assert_within_boundary(path: Path, item_work_dir: Path) -> Path:
 
 
 @dataclass(frozen=True)
+class IntroProps:
+    """Lead-in before the main body: one still, a title card, its own VO.
+
+    Mirrors introSchema in types.ts. duration_secs here is additive -- the
+    composition's total runtime is intro.duration_secs + duration_secs.
+    """
+
+    image_path: Path
+    title: str
+    duration_secs: float
+    voiceover_path: Path | None = None
+
+
+@dataclass(frozen=True)
 class RenderProps:
     item_id: int
     revision_no: int
@@ -50,6 +64,7 @@ class RenderProps:
     brand_name: str
     palette: list[str]
     broll_paths: list[Path] = field(default_factory=list)
+    intro: IntroProps | None = None
 
 
 def build_render_props(
@@ -63,10 +78,27 @@ def build_render_props(
     brand_name: str,
     palette: list[str],
     broll_paths: list[Path] | None = None,
+    intro: IntroProps | None = None,
 ) -> RenderProps:
     item_work_dir = get_settings().var_dir_abs / "work" / str(item_id)
     voiceover_path = _assert_within_boundary(voiceover_path, item_work_dir)
     resolved_broll = [_assert_within_boundary(p, item_work_dir) for p in (broll_paths or [])]
+
+    # The intro's media goes through the same boundary check as everything
+    # else -- an intro is not a loophole for an unvetted path.
+    resolved_intro = None
+    if intro is not None:
+        resolved_intro = IntroProps(
+            image_path=_assert_within_boundary(intro.image_path, item_work_dir),
+            title=intro.title,
+            duration_secs=intro.duration_secs,
+            voiceover_path=(
+                _assert_within_boundary(intro.voiceover_path, item_work_dir)
+                if intro.voiceover_path is not None
+                else None
+            ),
+        )
+
     return RenderProps(
         item_id=item_id,
         revision_no=revision_no,
@@ -77,6 +109,7 @@ def build_render_props(
         brand_name=brand_name,
         palette=palette,
         broll_paths=resolved_broll,
+        intro=resolved_intro,
     )
 
 
@@ -99,6 +132,22 @@ def stage_and_serialize(props: RenderProps) -> dict[str, Any]:
         _stage(p, staged_dir, f"broll_{i}{p.suffix}") for i, p in enumerate(props.broll_paths)
     ]
 
+    intro_payload: dict[str, Any] | None = None
+    if props.intro is not None:
+        intro = props.intro
+        intro_payload = {
+            "imageStaticPath": _stage(
+                intro.image_path, staged_dir, f"intro{intro.image_path.suffix}"
+            ),
+            "title": intro.title,
+            "voiceoverStaticPath": (
+                _stage(intro.voiceover_path, staged_dir, "intro_voice.wav")
+                if intro.voiceover_path is not None
+                else ""
+            ),
+            "durationSecs": intro.duration_secs,
+        }
+
     return {
         "onScreenHook": props.on_screen_hook,
         "captions": [{"word": c.word, "start": c.start, "end": c.end} for c in props.captions],
@@ -107,4 +156,5 @@ def stage_and_serialize(props: RenderProps) -> dict[str, Any]:
         "brandName": props.brand_name,
         "palette": props.palette,
         "brollStaticPaths": broll_static,
+        "intro": intro_payload,
     }

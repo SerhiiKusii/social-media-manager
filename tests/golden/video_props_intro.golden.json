@@ -1,5 +1,5 @@
 {
-  "onScreenHook": "Wait, THIS is why it works",
+  "onScreenHook": "Carlos approves",
   "captions": [
     { "word": "Here's", "start": 0.0, "end": 0.4 },
     { "word": "the", "start": 0.4, "end": 0.58 },
@@ -9,6 +9,11 @@
   "durationSecs": 28.0,
   "brandName": "Acme",
   "palette": ["#111111", "#F5F5F5", "#FF5A1F"],
-  "brollStaticPaths": [],
-  "intro": null
+  "brollStaticPaths": ["generated/1-0/broll_0.mp4"],
+  "intro": {
+    "imageStaticPath": "generated/1-0/intro.png",
+    "title": "Carlos approves",
+    "voiceoverStaticPath": "generated/1-0/intro_voice.wav",
+    "durationSecs": 5.0
+  }
 }

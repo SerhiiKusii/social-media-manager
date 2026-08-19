@@ -10,6 +10,18 @@ export const wordTimingSchema = z.object({
   end: z.number().nonnegative(),
 });
 
+// An optional lead-in shown before the main body: one still image with a
+// slow Ken Burns push, a title card, and its own short voiceover. The
+// main segment's captions/timings stay relative to the main voiceover, so
+// the intro is additive -- durationSecs below is the MAIN duration, and
+// total runtime is introDurationSecs + durationSecs.
+export const introSchema = z.object({
+  imageStaticPath: z.string(),
+  title: z.string(),
+  voiceoverStaticPath: z.string().default(""),
+  durationSecs: z.number().positive(),
+});
+
 export const videoPropsSchema = z.object({
   onScreenHook: z.string(),
   captions: z.array(wordTimingSchema),
@@ -18,7 +30,10 @@ export const videoPropsSchema = z.object({
   brandName: z.string(),
   palette: z.array(z.string()),
   brollStaticPaths: z.array(z.string()).default([]),
+  intro: introSchema.nullable().default(null),
 });
+
+export type IntroProps = z.infer<typeof introSchema>;
 
 export type WordTiming = z.infer<typeof wordTimingSchema>;
 export type VideoProps = z.infer<typeof videoPropsSchema>;

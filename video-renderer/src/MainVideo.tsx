@@ -1,8 +1,12 @@
 import React from "react";
-import { AbsoluteFill, Audio, OffthreadVideo, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
+import { AbsoluteFill, Audio, OffthreadVideo, Sequence, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
+import { Intro } from "./Intro";
 import type { VideoProps } from "./types";
 
-export const MainVideo: React.FC<VideoProps> = ({
+// The main body, unaware of any intro: its caption timings are relative
+// to its own voiceover starting at frame 0. MainVideo wraps this in a
+// Sequence so the intro can shift it without touching the timings.
+const Body: React.FC<Omit<VideoProps, "intro">> = ({
   onScreenHook,
   captions,
   voiceoverStaticPath,
@@ -67,6 +71,29 @@ export const MainVideo: React.FC<VideoProps> = ({
           {brandName}
         </div>
       </AbsoluteFill>
+    </AbsoluteFill>
+  );
+};
+
+export const MainVideo: React.FC<VideoProps> = (props) => {
+  const { fps } = useVideoConfig();
+  const { intro, ...body } = props;
+
+  if (!intro) {
+    return <Body {...body} />;
+  }
+
+  const introFrames = Math.max(1, Math.ceil(intro.durationSecs * fps));
+  const bodyFrames = Math.max(1, Math.ceil(body.durationSecs * fps));
+
+  return (
+    <AbsoluteFill>
+      <Sequence durationInFrames={introFrames}>
+        <Intro {...intro} palette={body.palette} />
+      </Sequence>
+      <Sequence from={introFrames} durationInFrames={bodyFrames}>
+        <Body {...body} />
+      </Sequence>
     </AbsoluteFill>
   );
 };
