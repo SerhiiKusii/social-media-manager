@@ -2,6 +2,11 @@
 Description=Run the Trend Stealer worker every 2 minutes
 
 [Timer]
+# OnUnitInactiveSec= alone has no reference point until the service has run
+# once, so the timer would sit with an empty NEXT after every boot and never
+# fire on its own. OnActiveSec= bootstraps the first run relative to the
+# timer starting; OnUnitInactiveSec= drives the steady state from there.
+OnActiveSec=120
 OnUnitInactiveSec=120
 AccuracySec=30
 Persistent=false
