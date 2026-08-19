@@ -28,6 +28,23 @@ timezone = "America/New_York"
 tiktok_seed_accounts = ["testaccount"]
 instagram_seed_hashtags = []
 
+[intro]
+# Branded lead-in prepended to every render. The image is picked from the
+# asset library by tag, so it goes through the same licence gate as any
+# other on-screen media. Titles rotate per (item, revision).
+enabled = true
+image_tag = "carlos"
+titles = ["Carlos approves it", "Carlos is watching it", "Carlos loves it"]
+# The spoken line is the title itself, so the viewer hears what they read.
+voiceover_from_title = true
+duration_secs = 5.0
+
+[broll]
+# Background footage tag. These are Pexels clips fetched via
+# `trendstealer assets fetch-pexels` -- never scraped video.
+tag = "football"
+count = 1
+
 [virality]
 # Overrides for config/app.toml [virality]; omit keys to inherit global default.
 

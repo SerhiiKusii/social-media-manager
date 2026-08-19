@@ -175,11 +175,38 @@ class BrandSources(BaseModel):
     instagram_seed_hashtags: list[str] = Field(default_factory=list)
 
 
+class BrandIntro(BaseModel):
+    """Optional branded lead-in prepended to every render.
+
+    The image is chosen from the asset library by tag, so the intro
+    inherits the same licence gate as any other on-screen media.
+    """
+
+    enabled: bool = False
+    image_tag: str | None = None
+    titles: list[str] = Field(default_factory=list)
+    # Fixed line spoken over the intro. Leave empty and set
+    # voiceover_from_title to have the spoken line match the title card,
+    # so the viewer hears exactly what they read.
+    voiceover_text: str = ""
+    voiceover_from_title: bool = False
+    duration_secs: float = 5.0
+
+
+class BrandBroll(BaseModel):
+    """Background footage selection. Empty tag means no b-roll (flat colour)."""
+
+    tag: str | None = None
+    count: int = 1
+
+
 class BrandConfig(BaseModel):
     brand: BrandIdentity
     accounts: BrandAccounts = BrandAccounts()
     posting_windows: BrandPostingWindows = BrandPostingWindows()
     sources: BrandSources = BrandSources()
+    intro: BrandIntro = BrandIntro()
+    broll: BrandBroll = BrandBroll()
     virality: ViralityConfig
     publish: PublishConfig
 
@@ -218,6 +245,8 @@ def load_brand_config(brand_id: str, *, app_config: AppConfig | None = None) -> 
             "accounts": raw.get("accounts", {}),
             "posting_windows": raw.get("posting_windows", {}),
             "sources": raw.get("sources", {}),
+            "intro": raw.get("intro", {}),
+            "broll": raw.get("broll", {}),
             "virality": virality,
             "publish": publish,
         }

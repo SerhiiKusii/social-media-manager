@@ -16,15 +16,16 @@ untouched.
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 from trendstealer import repo
 from trendstealer.captions import save_captions, transcribe_word_timings
-from trendstealer.config import BrandConfig, get_settings
+from trendstealer.config import REPO_ROOT, BrandConfig, get_settings
 from trendstealer.intelligence.backend import LLMBackend
 from trendstealer.intelligence.feedback import format_hook_performance
 from trendstealer.intelligence.synthesize import synthesize
 from trendstealer.logging import get_logger
-from trendstealer.render.props import build_render_props
+from trendstealer.render.props import IntroProps, build_render_props
 from trendstealer.render.remotion import render_video
 from trendstealer.states import ContentStatus
 from trendstealer.tts.backend import TTSBackend
@@ -190,6 +191,16 @@ def _run_render(
     captions_path = work_dir / f"captions_r{revision_no}.json"
     save_captions(captions, captions_path)
 
+    broll_paths, broll_asset_ids = _select_broll(conn, brand=brand)
+    intro, intro_asset_ids = _build_intro(
+        conn,
+        brand=brand,
+        item_id=item_id,
+        revision_no=revision_no,
+        work_dir=work_dir,
+        tts_backend=tts_backend,
+    )
+
     render_props = build_render_props(
         item_id=item_id,
         revision_no=revision_no,
@@ -199,8 +210,23 @@ def _run_render(
         duration_secs=tts_result.duration_secs,
         brand_name=brand.brand.name,
         palette=brand.brand.palette,
+        broll_paths=broll_paths,
+        intro=intro,
     )
     render_result = render_video(render_props)
+
+    # Provenance before anything can be published: item_assets is what
+    # preflight() reads to refuse an uncleared asset.
+    if broll_asset_ids:
+        repo.record_item_assets(
+            conn, revision_id=revision["id"], asset_ids=broll_asset_ids, role="broll"
+        )
+    if intro_asset_ids:
+        repo.record_item_assets(
+            conn, revision_id=revision["id"], asset_ids=intro_asset_ids, role="intro"
+        )
+    for asset_id in [*broll_asset_ids, *intro_asset_ids]:
+        repo.touch_asset_used(conn, asset_id)
 
     repo.update_revision_render(
         conn,
@@ -210,3 +236,60 @@ def _run_render(
         video_path=str(render_result.path),
         render_ms=render_result.render_ms,
     )
+
+
+def _select_broll(
+    conn: sqlite3.Connection, *, brand: BrandConfig
+) -> tuple[list[Path], list[int]]:
+    """Least-recently-used cleared clips matching the brand's b-roll tag.
+
+    Only cleared assets are considered, so an unlicensed clip can never be
+    picked up here by accident -- preflight() is the backstop, not the
+    first line of defence.
+    """
+    if brand.broll.tag is None:
+        return [], []
+    rows = repo.list_assets(
+        conn, kind="video", tag=brand.broll.tag, limit=max(1, brand.broll.count)
+    )
+    paths = [REPO_ROOT / row["path"] for row in rows]
+    return paths, [int(row["id"]) for row in rows]
+
+
+def _build_intro(
+    conn: sqlite3.Connection,
+    *,
+    brand: BrandConfig,
+    item_id: int,
+    revision_no: int,
+    work_dir: Path,
+    tts_backend: TTSBackend,
+) -> tuple[IntroProps | None, list[int]]:
+    config = brand.intro
+    if not config.enabled or config.image_tag is None or not config.titles:
+        return None, []
+
+    rows = repo.list_assets(conn, kind="image", tag=config.image_tag, limit=1)
+    if not rows:
+        logger.warning("intro_skipped_no_image_asset", image_tag=config.image_tag)
+        return None, []
+    image_row = rows[0]
+
+    # Deterministic per (item, revision): a re-render of the same revision
+    # reproduces the same title, while a revision request rotates to the
+    # next one -- so "make it different" actually changes something.
+    title = config.titles[(item_id + revision_no) % len(config.titles)]
+
+    spoken = title if config.voiceover_from_title else config.voiceover_text
+    intro_voice_path: Path | None = None
+    if spoken:
+        intro_voice_path = work_dir / f"intro_voice_r{revision_no}.wav"
+        tts_backend.synthesize(spoken, intro_voice_path)
+
+    intro = IntroProps(
+        image_path=REPO_ROOT / image_row["path"],
+        title=title,
+        duration_secs=config.duration_secs,
+        voiceover_path=intro_voice_path,
+    )
+    return intro, [int(image_row["id"])]
