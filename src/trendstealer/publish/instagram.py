@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -19,27 +21,42 @@ class InstagramPublisher:
         poll_interval_secs: float = 2.0,
         poll_timeout_secs: float = 120.0,
         video_url: str | None = None,
+        video_url_provider: Callable[[Path], AbstractContextManager[str]] | None = None,
+        graph_api_base: str = GRAPH_API_BASE,
     ) -> None:
         self.business_account_id = business_account_id
         self.client = client or httpx.Client(timeout=60.0)
         self.poll_interval_secs = poll_interval_secs
         self.poll_timeout_secs = poll_timeout_secs
         self.video_url = video_url
+        # For tokens with no resumable-upload path (Instagram Login):
+        # video_url_provider(video_path) yields a context manager producing
+        # a temporary public URL, kept alive until Meta finishes fetching it.
+        self.video_url_provider = video_url_provider
+        self.graph_api_base = graph_api_base
 
     def publish(self, *, video_path: Path, caption: str, access_token: str) -> PublishResult:
-        try:
-            container_id = get_video_reference(
-                business_account_id=self.business_account_id,
-                access_token=access_token,
-                caption=caption,
-                video_path=video_path,
-                client=self.client,
-                video_url=self.video_url,
-            )
-        except UploadError as exc:
-            raise self._reraise_graph_error(exc) from exc
+        url_cm = (
+            self.video_url_provider(video_path)
+            if self.video_url_provider is not None
+            else nullcontext(self.video_url)
+        )
+        with url_cm as video_url:
+            try:
+                container_id = get_video_reference(
+                    business_account_id=self.business_account_id,
+                    access_token=access_token,
+                    caption=caption,
+                    video_path=video_path,
+                    client=self.client,
+                    video_url=video_url,
+                    graph_api_base=self.graph_api_base,
+                )
+            except UploadError as exc:
+                raise self._reraise_graph_error(exc) from exc
 
-        self._wait_until_finished(container_id, access_token)
+            self._wait_until_finished(container_id, access_token)
+
         media_id = self._media_publish(container_id, access_token)
         permalink = self._fetch_permalink(media_id, access_token)
         return PublishResult(platform_media_id=media_id, permalink=permalink)
@@ -48,7 +65,7 @@ class InstagramPublisher:
         deadline = time.monotonic() + self.poll_timeout_secs
         while True:
             response = self.client.get(
-                f"{GRAPH_API_BASE}/{container_id}",
+                f"{self.graph_api_base}/{container_id}",
                 params={"fields": "status_code", "access_token": access_token},
             )
             if response.status_code == 429:
@@ -67,7 +84,7 @@ class InstagramPublisher:
 
     def _media_publish(self, container_id: str, access_token: str) -> str:
         response = self.client.post(
-            f"{GRAPH_API_BASE}/{self.business_account_id}/media_publish",
+            f"{self.graph_api_base}/{self.business_account_id}/media_publish",
             data={"creation_id": container_id, "access_token": access_token},
         )
         self._raise_for_error(response)
@@ -75,7 +92,7 @@ class InstagramPublisher:
 
     def _fetch_permalink(self, media_id: str, access_token: str) -> str | None:
         response = self.client.get(
-            f"{GRAPH_API_BASE}/{media_id}",
+            f"{self.graph_api_base}/{media_id}",
             params={"fields": "permalink", "access_token": access_token},
         )
         self._raise_for_error(response)

@@ -13,7 +13,18 @@ import sqlite3
 from pathlib import Path
 from typing import Any, cast
 
-from flask import Flask, Response, abort, g, redirect, render_template, request, send_file, url_for
+from flask import (
+    Flask,
+    Response,
+    abort,
+    g,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    session,
+    url_for,
+)
 from flask_wtf import CSRFProtect
 from werkzeug.wrappers import Response as WerkzeugResponse
 
@@ -64,7 +75,15 @@ def create_app(
     def _security_gate() -> None:
         if not check_allowed_host(request, app.config["TRENDSTEALER_ALLOWED_HOSTS"]):
             abort(400)
-        if not check_bearer_token(request, app.config["TRENDSTEALER_TOKEN"]):
+        # The token check re-validates every request (stateless, correct for
+        # curl/API use). The session flag is purely a convenience so a human
+        # clicking through the dashboard doesn't need ?token= on every link
+        # -- it's set below only after a real token check already passed,
+        # so it grants nothing check_bearer_token wouldn't have granted.
+        if check_bearer_token(request, app.config["TRENDSTEALER_TOKEN"]):
+            session["authed"] = True
+            return
+        if not session.get("authed"):
             abort(401)
 
     @app.after_request
@@ -100,8 +119,14 @@ def create_app(
             conn, ContentStatus.PENDING_REVIEW, limit=PAGE_SIZE, offset=offset
         )
         total = repo.count_items_by_status_value(conn, ContentStatus.PENDING_REVIEW)
+        in_flight = repo.list_items_in_flight(conn) if page == 1 else []
         return render_template(
-            "queue.html", items=items, page=page, page_size=PAGE_SIZE, total=total
+            "queue.html",
+            items=items,
+            page=page,
+            page_size=PAGE_SIZE,
+            total=total,
+            in_flight=in_flight,
         )
 
     @app.route("/item/<int:item_id>")

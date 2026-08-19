@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import typer
 
 from trendstealer import db, repo
@@ -194,6 +196,7 @@ def publish_run(brand_key: str) -> None:
     from trendstealer.commands.publish import run_publish_once
     from trendstealer.publish.base import DryRunPublisher
     from trendstealer.publish.instagram import InstagramPublisher
+    from trendstealer.publish.upload import GRAPH_API_BASE
 
     settings = get_settings()
     app_config = load_app_config()
@@ -210,7 +213,17 @@ def publish_run(brand_key: str) -> None:
         if not access_token or not business_account_id:
             typer.echo("IG_ACCESS_TOKEN / IG_BUSINESS_ACCOUNT_ID are not set", err=True)
             raise typer.Exit(code=1)
-        publisher = InstagramPublisher(business_account_id=business_account_id)
+        graph_api_base = os.environ.get("TRENDSTEALER_GRAPH_API_BASE", GRAPH_API_BASE)
+        video_url_provider = None
+        if os.environ.get("TRENDSTEALER_PUBLISH_TUNNEL") == "cloudflared":
+            from trendstealer.publish.tunnel import serve_video_publicly
+
+            video_url_provider = serve_video_publicly
+        publisher = InstagramPublisher(
+            business_account_id=business_account_id,
+            graph_api_base=graph_api_base,
+            video_url_provider=video_url_provider,
+        )
     else:
         publisher = DryRunPublisher()
         access_token = access_token or "dry-run"
@@ -243,7 +256,11 @@ def metrics_run(brand_key: str) -> None:
     import httpx
 
     from trendstealer.commands.metrics import run_metrics_once
-    from trendstealer.metrics.instagram_insights import MediaInsights, fetch_media_insights
+    from trendstealer.metrics.instagram_insights import (
+        GRAPH_API_BASE,
+        MediaInsights,
+        fetch_media_insights,
+    )
 
     settings = get_settings()
     app_config = load_app_config()
@@ -255,9 +272,15 @@ def metrics_run(brand_key: str) -> None:
 
     if settings.publish_mode == "live" and access_token:
         client = httpx.Client(timeout=30.0)
+        graph_api_base = os.environ.get("TRENDSTEALER_GRAPH_API_BASE", GRAPH_API_BASE)
 
         def fetch(media_id: str) -> MediaInsights:
-            return fetch_media_insights(media_id=media_id, access_token=access_token, client=client)
+            return fetch_media_insights(
+                media_id=media_id,
+                access_token=access_token,
+                client=client,
+                graph_api_base=graph_api_base,
+            )
     else:
 
         def fetch(media_id: str) -> MediaInsights:

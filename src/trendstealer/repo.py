@@ -506,6 +506,38 @@ def count_items_by_status_value(conn: sqlite3.Connection, status: ContentStatus)
     return int(row["n"])
 
 
+def list_items_in_flight(conn: sqlite3.Connection, *, limit: int = 20) -> list[sqlite3.Row]:
+    """Items the worker still owes the reviewer a result for.
+
+    Without this the dashboard looks empty the moment someone requests
+    changes, which reads as "my request vanished" rather than "the worker
+    is rebuilding it".
+    """
+    statuses = (
+        ContentStatus.CHANGES_REQUESTED,
+        ContentStatus.QUEUED,
+        ContentStatus.SYNTHESIZING,
+        ContentStatus.SCRIPT_READY,
+        ContentStatus.RENDERING,
+    )
+    placeholders = ",".join("?" for _ in statuses)
+    return conn.execute(
+        f"""
+        SELECT
+            ci.id AS item_id, ci.status, ci.updated_at,
+            t.platform, t.posted_at,
+            r.revision_no, r.on_screen_hook
+        FROM content_items ci
+        JOIN trends t ON t.id = ci.trend_id
+        LEFT JOIN revisions r ON r.id = ci.current_revision_id
+        WHERE ci.status IN ({placeholders})
+        ORDER BY ci.updated_at ASC
+        LIMIT ?
+        """,
+        (*(str(s) for s in statuses), limit),
+    ).fetchall()
+
+
 def get_item_detail(conn: sqlite3.Connection, item_id: int) -> dict[str, object] | None:
     row = conn.execute(
         """

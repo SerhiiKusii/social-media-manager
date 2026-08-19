@@ -183,6 +183,34 @@ def test_publish_returns_none_when_rate_limited(
     assert row["status"] == str(ContentStatus.APPROVED)  # untouched
 
 
+def test_failed_attempt_does_not_block_a_later_retry_of_the_same_key(
+    conn: sqlite3.Connection, approved_item: dict[str, int]
+) -> None:
+    """A failed publish must stay recorded (it's the audit trail) without
+    poisoning the idempotency key. Before the partial unique index, the
+    retry died on IntegrityError *after* the Reel was already live."""
+    revision_id = repo.get_content_item(conn, approved_item["item_id"])["current_revision_id"]
+    kwargs = dict(
+        content_item_id=approved_item["item_id"],
+        revision_id=revision_id,
+        brand_id=approved_item["brand_id"],
+        platform="instagram",
+        account_id=approved_item["account_id"],
+        idempotency_key="retry-key",
+    )
+    repo.create_publication(conn, **kwargs, status="failed", error="transient upload error")
+    repo.create_publication(conn, **kwargs, status="published", platform_media_id="m1")
+
+    rows = conn.execute(
+        "SELECT status FROM publications WHERE idempotency_key = 'retry-key' ORDER BY id"
+    ).fetchall()
+    assert [r["status"] for r in rows] == ["failed", "published"]
+
+    # ...but a second *successful* publish on that key is still refused.
+    with pytest.raises(sqlite3.IntegrityError):
+        repo.create_publication(conn, **kwargs, status="published", platform_media_id="m2")
+
+
 def test_double_publish_with_same_idempotency_key_raises_integrity_error(
     conn: sqlite3.Connection, approved_item: dict[str, int]
 ) -> None:

@@ -20,4 +20,23 @@
   {% if page > 1 %}<a href="{{ url_for('queue', page=page - 1) }}">&laquo; Previous</a>{% endif %}
   {% if page * page_size < total %}<a href="{{ url_for('queue', page=page + 1) }}">Next &raquo;</a>{% endif %}
 </nav>
+
+{% if in_flight %}
+<h2>In progress ({{ in_flight | length }})</h2>
+<p>The worker is building these. They return to the queue above when done.</p>
+<table>
+  <thead><tr><th>Item</th><th>Status</th><th>Revision</th><th>Hook</th><th>Since</th></tr></thead>
+  <tbody>
+  {% for it in in_flight %}
+    <tr>
+      <td><a href="{{ url_for('item_detail', item_id=it['item_id']) }}">#{{ it['item_id'] }}</a></td>
+      <td>{{ it['status'] }}</td>
+      <td>{{ it['revision_no'] if it['revision_no'] is not none else '' }}</td>
+      <td>{{ it['on_screen_hook'] or '' }}</td>
+      <td>{{ it['updated_at'] or '' }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
 {% endblock %}

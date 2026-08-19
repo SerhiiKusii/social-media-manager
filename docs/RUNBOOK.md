@@ -75,6 +75,23 @@ outcome directly. Check `publications.error` for the last attempt
 status='failed' ORDER BY id DESC LIMIT 5"`). A `190` error code means the
 access token expired -- see below.
 
+**A container goes straight to `status_code=ERROR` within seconds.** Too
+fast to be a video problem -- Meta validates `video_url` synchronously at
+container creation, so this is the URL not answering yet. On the tunnel
+path `publish/tunnel.py` already waits for the edge to respond before
+handing the URL over; if it still happens, check that `cloudflared` is
+reachable and that nothing is blocking `*.trycloudflare.com`. (A local
+DNS filter blocking that domain does **not** break publishing -- Meta
+does the fetching -- but it does break the readiness probe, which then
+falls back to resolving over DoH.)
+
+**A Reel is live but the DB says `publishing`.** The publish succeeded and
+the bookkeeping INSERT afterwards did not. Search the log for
+`publish_recorded_failed_but_post_is_live`; it carries the
+`platform_media_id` and `permalink`. Insert the `publications` row by
+hand with `status='published'`, then transition the item
+`publishing -> published`. Do **not** re-run publish -- that double-posts.
+
 **Access token expiring or expired.**
 `trendstealer maintenance check-token <brand> --warn-days 7` exits
 non-zero once the token is within the warning window; wire it into a

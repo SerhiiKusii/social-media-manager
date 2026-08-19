@@ -43,10 +43,11 @@ def create_resumable_container(
     access_token: str,
     caption: str,
     client: httpx.Client,
+    graph_api_base: str = GRAPH_API_BASE,
 ) -> tuple[str, str]:
     """Returns (container_id, upload_uri)."""
     response = client.post(
-        f"{GRAPH_API_BASE}/{business_account_id}/media",
+        f"{graph_api_base}/{business_account_id}/media",
         data={
             "media_type": "REELS",
             "upload_type": "resumable",
@@ -66,10 +67,16 @@ def create_url_container(
     caption: str,
     video_url: str,
     client: httpx.Client,
+    graph_api_base: str = GRAPH_API_BASE,
 ) -> str:
-    """Path B: container created directly from a publicly reachable video_url."""
+    """Path B: container created directly from a publicly reachable video_url.
+
+    Required (only option) for tokens issued via Instagram Login -- that
+    auth flow has no resumable-upload endpoint, per Meta's docs; Path A is
+    Facebook-Login-for-Business only.
+    """
     response = client.post(
-        f"{GRAPH_API_BASE}/{business_account_id}/media",
+        f"{graph_api_base}/{business_account_id}/media",
         data={
             "media_type": "REELS",
             "video_url": video_url,
@@ -107,6 +114,7 @@ def get_video_reference(
     video_path: Path,
     client: httpx.Client,
     video_url: str | None = None,
+    graph_api_base: str = GRAPH_API_BASE,
 ) -> str:
     """Creates a media container and (path A only) uploads the video bytes
     to it. Returns the container_id, ready to poll then media_publish()."""
@@ -117,6 +125,7 @@ def get_video_reference(
             caption=caption,
             video_url=video_url,
             client=client,
+            graph_api_base=graph_api_base,
         )
 
     container_id, upload_uri = create_resumable_container(
@@ -124,6 +133,7 @@ def get_video_reference(
         access_token=access_token,
         caption=caption,
         client=client,
+        graph_api_base=graph_api_base,
     )
     upload_resumable_bytes(
         upload_uri=upload_uri, access_token=access_token, video_path=video_path, client=client

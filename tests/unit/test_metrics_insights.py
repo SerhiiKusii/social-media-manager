@@ -4,6 +4,7 @@ import respx
 
 from trendstealer.metrics.instagram_insights import (
     GRAPH_API_BASE,
+    METRICS,
     InsightsError,
     fetch_media_insights,
 )
@@ -36,6 +37,38 @@ def test_fetch_media_insights_maps_metric_names() -> None:
     assert insights.shares == 2
     assert insights.saves == 3
     assert insights.reach == 900
+
+
+@respx.mock
+def test_fetch_media_insights_maps_the_current_views_metric() -> None:
+    """The API retired "plays" and now rejects it; Reels report "views"."""
+    assert "views" in METRICS
+    assert "plays" not in METRICS
+    respx.get(f"{GRAPH_API_BASE}/{MEDIA_ID}/insights").mock(
+        return_value=httpx.Response(
+            200,
+            json={"data": [{"name": "views", "period": "lifetime", "values": [{"value": 1234}]}]},
+        )
+    )
+    insights = fetch_media_insights(media_id=MEDIA_ID, access_token="tok", client=httpx.Client())
+    assert insights.views == 1234
+
+
+@respx.mock
+def test_fetch_media_insights_honours_a_custom_graph_api_base() -> None:
+    """Instagram-Login tokens only work against graph.instagram.com."""
+    base = "https://graph.instagram.com/v21.0"
+    route = respx.get(f"{base}/{MEDIA_ID}/insights").mock(
+        return_value=httpx.Response(
+            200,
+            json={"data": [{"name": "views", "period": "lifetime", "values": [{"value": 7}]}]},
+        )
+    )
+    insights = fetch_media_insights(
+        media_id=MEDIA_ID, access_token="tok", client=httpx.Client(), graph_api_base=base
+    )
+    assert route.called
+    assert insights.views == 7
 
 
 @respx.mock

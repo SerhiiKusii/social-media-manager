@@ -99,19 +99,34 @@ def run_publish_once(
         )
         return PublishOutcome(item_id=item_id, status="failed", reason=str(exc))
 
-    repo.create_publication(
-        conn,
-        content_item_id=item_id,
-        revision_id=revision["id"],
-        brand_id=brand_id,
-        platform="instagram",
-        account_id=account_id,
-        idempotency_key=idempotency_key,
-        platform_media_id=result.platform_media_id,
-        permalink=result.permalink,
-        status="published",
-        published_at=now,
-    )
+    # Past this point the Reel is live and nothing local can undo it. A
+    # failure here is a bookkeeping failure, not a publish failure -- it
+    # must never be reported as "failed" (that would invite a retry that
+    # double-posts) and must never leave the item wedged in `publishing`.
+    # Log the platform ids loudly so the row can be reconciled by hand.
+    try:
+        repo.create_publication(
+            conn,
+            content_item_id=item_id,
+            revision_id=revision["id"],
+            brand_id=brand_id,
+            platform="instagram",
+            account_id=account_id,
+            idempotency_key=idempotency_key,
+            platform_media_id=result.platform_media_id,
+            permalink=result.permalink,
+            status="published",
+            published_at=now,
+        )
+    except Exception:
+        logger.exception(
+            "publish_recorded_failed_but_post_is_live",
+            item_id=item_id,
+            revision_id=revision["id"],
+            platform_media_id=result.platform_media_id,
+            permalink=result.permalink,
+        )
+
     repo.transition(
         conn, item_id, ContentStatus.PUBLISHING, ContentStatus.PUBLISHED, actor="publisher"
     )

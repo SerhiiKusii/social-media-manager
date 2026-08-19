@@ -167,6 +167,28 @@ def test_approve_transitions_item_and_redirects(
     assert row["status"] == str(ContentStatus.APPROVED)
 
 
+def test_queue_still_shows_item_after_changes_requested(
+    client: FlaskClient, seeded_item: dict[str, int | Path]
+) -> None:
+    item_id = seeded_item["item_id"]
+    token = _csrf_token(client, item_id)
+    resp = client.post(
+        f"/item/{item_id}/action",
+        data={
+            "action": "request_changes",
+            "version": str(seeded_item["version"]),
+            "note": "punchier hook",
+            "csrf_token": token,
+        },
+        headers=AUTH_HEADERS,
+    )
+    assert resp.status_code == 302
+
+    resp = client.get("/queue", headers=AUTH_HEADERS)
+    assert f"#{item_id}".encode() in resp.data
+    assert b"changes_requested" in resp.data
+
+
 def test_stale_version_is_rejected_with_409(
     client: FlaskClient, seeded_item: dict[str, int | Path]
 ) -> None:

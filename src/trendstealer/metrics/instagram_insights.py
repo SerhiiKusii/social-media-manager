@@ -13,7 +13,10 @@ from dataclasses import dataclass
 import httpx
 
 GRAPH_API_BASE = "https://graph.facebook.com/v21.0"
-METRICS = ["reach", "likes", "comments", "shares", "saved", "plays"]
+# "plays" was retired -- the API now rejects it outright and wants "views"
+# for Reels. Keep this list in step with the error message the Graph API
+# returns when a metric name is wrong; it enumerates the valid set.
+METRICS = ["reach", "likes", "comments", "shares", "saved", "views"]
 
 
 class InsightsError(RuntimeError):
@@ -31,7 +34,8 @@ class MediaInsights:
 
 
 _METRIC_TO_FIELD = {
-    "plays": "views",
+    "views": "views",
+    "plays": "views",  # pre-retirement name, kept so old recorded fixtures still map
     "likes": "likes",
     "comments": "comments",
     "shares": "shares",
@@ -41,10 +45,14 @@ _METRIC_TO_FIELD = {
 
 
 def fetch_media_insights(
-    *, media_id: str, access_token: str, client: httpx.Client
+    *,
+    media_id: str,
+    access_token: str,
+    client: httpx.Client,
+    graph_api_base: str = GRAPH_API_BASE,
 ) -> MediaInsights:
     response = client.get(
-        f"{GRAPH_API_BASE}/{media_id}/insights",
+        f"{graph_api_base}/{media_id}/insights",
         params={"metric": ",".join(METRICS), "access_token": access_token},
     )
     if response.status_code >= 400:
