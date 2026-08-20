@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import os
+import sqlite3
+from typing import TYPE_CHECKING, NamedTuple
 
 import typer
 
 from trendstealer import db, repo
 from trendstealer.config import get_settings, list_brand_ids, load_app_config, load_brand_config
+
+if TYPE_CHECKING:
+    from trendstealer.commands.publish import PublishOutcome
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 db_app = typer.Typer(no_args_is_help=True)
@@ -13,6 +18,7 @@ brands_app = typer.Typer(no_args_is_help=True)
 review_app = typer.Typer(no_args_is_help=True)
 ingest_app = typer.Typer(no_args_is_help=True)
 worker_app = typer.Typer(no_args_is_help=True)
+generate_app = typer.Typer(no_args_is_help=True)
 publish_app = typer.Typer(no_args_is_help=True)
 metrics_app = typer.Typer(no_args_is_help=True)
 maintenance_app = typer.Typer(no_args_is_help=True)
@@ -22,6 +28,7 @@ app.add_typer(brands_app, name="brands")
 app.add_typer(review_app, name="review")
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(worker_app, name="worker")
+app.add_typer(generate_app, name="generate")
 app.add_typer(publish_app, name="publish")
 app.add_typer(metrics_app, name="metrics")
 app.add_typer(maintenance_app, name="maintenance")
@@ -148,57 +155,127 @@ def ingest_run(brand_key: str, dry_run: bool = False) -> None:
 def worker_run_once(brand_key: str) -> None:
     """Claim and fully process one item (synthesize/render/whatever stage
     it's at). Prints nothing and exits 0 if there was nothing to claim."""
-    import fcntl
-    import os
-    import socket
-
-    from trendstealer.commands.worker import run_worker_once
-    from trendstealer.intelligence.synthesize import get_backend
-    from trendstealer.tts.piper import PiperBackend
+    from trendstealer.commands.worker import (
+        WorkerBusyError,
+        build_backends,
+        run_worker_once,
+        worker_lock,
+    )
 
     settings = get_settings()
     app_config = load_app_config()
     brand = load_brand_config(brand_key, app_config=app_config)
 
-    lock_dir = settings.var_dir_abs / "locks"
-    lock_dir.mkdir(parents=True, exist_ok=True)
-    lock_file = open(lock_dir / "worker.lock", "w")  # noqa: SIM115 - held for process lifetime
     try:
-        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+        with worker_lock(settings.var_dir_abs):
+            conn = db.connect()
+            llm_backend, tts_backend, worker_id = build_backends(settings, app_config)
+            item_id = run_worker_once(
+                conn,
+                brand=brand,
+                llm_backend=llm_backend,
+                tts_backend=tts_backend,
+                worker_id=worker_id,
+                lease_ttl_seconds=app_config.worker.lease_ttl_seconds,
+            )
+    except WorkerBusyError:
         typer.echo("another worker run is already in progress, skipping", err=True)
         raise typer.Exit(code=0) from None
 
-    conn = db.connect()
-    llm_backend = get_backend(
-        settings.llm_backend,
-        model=app_config.intelligence.model,
-        max_tokens=app_config.intelligence.max_tokens,
-    )
-    tts_backend = PiperBackend(
-        target_lufs=app_config.tts.target_lufs, sample_rate_hz=app_config.tts.sample_rate_hz
-    )
-    worker_id = f"{socket.gethostname()}:{os.getpid()}"
-
-    item_id = run_worker_once(
-        conn,
-        brand=brand,
-        llm_backend=llm_backend,
-        tts_backend=tts_backend,
-        worker_id=worker_id,
-        lease_ttl_seconds=app_config.worker.lease_ttl_seconds,
-    )
     if item_id is not None:
         typer.echo(f"processed item {item_id}")
 
 
+@generate_app.command("now")
+def generate_now(
+    brand_key: str,
+    item_id: int | None = None,
+    skip_ingest: bool = False,
+) -> None:
+    """Ingest, then render one item immediately -- the manual alternative to
+    waiting for viral-worker.timer. Prints the rendered MP4 path."""
+    from trendstealer.commands.worker import (
+        WorkerBusyError,
+        build_backends,
+        run_worker_once,
+        worker_lock,
+    )
+
+    settings = get_settings()
+    app_config = load_app_config()
+    brand = load_brand_config(brand_key, app_config=app_config)
+
+    if not skip_ingest and item_id is None:
+        ingest_run(brand_key)
+
+    try:
+        with worker_lock(settings.var_dir_abs):
+            conn = db.connect()
+            llm_backend, tts_backend, worker_id = build_backends(settings, app_config)
+            processed = run_worker_once(
+                conn,
+                brand=brand,
+                llm_backend=llm_backend,
+                tts_backend=tts_backend,
+                worker_id=worker_id,
+                lease_ttl_seconds=app_config.worker.lease_ttl_seconds,
+                item_id=item_id,
+            )
+    except WorkerBusyError:
+        typer.echo(
+            "another worker run is already in progress -- "
+            "wait for it to finish, or stop viral-worker.timer",
+            err=True,
+        )
+        raise typer.Exit(code=1) from None
+
+    if processed is None:
+        if item_id is not None:
+            typer.echo(
+                f"item {item_id} is not claimable (wrong status, or another worker holds it)",
+                err=True,
+            )
+        elif settings.apify_mode == "fixture":
+            typer.echo(
+                "nothing to generate: no queued items, and ingest is in fixture mode so it "
+                "replays the same recorded trends every run (all of which already have items). "
+                "Set TRENDSTEALER_APIFY_MODE=live with APIFY_API_TOKEN to discover new ones.",
+                err=True,
+            )
+        else:
+            typer.echo(
+                "nothing to generate: no queued items and ingest found no new trends", err=True
+            )
+        raise typer.Exit(code=1)
+
+    conn = db.connect()
+    detail = repo.get_content_item(conn, processed)
+    revision = repo.get_revision(conn, detail["current_revision_id"]) if detail else None
+    typer.echo(f"item {processed}: {detail['status'] if detail else 'unknown'}")
+    if revision and revision["video_path"]:
+        typer.echo(revision["video_path"])
+
+
+def _echo_outcome(outcome: PublishOutcome) -> None:
+    typer.echo(
+        f"item {outcome.item_id}: {outcome.status}"
+        + (f" ({outcome.reason})" if outcome.reason else "")
+    )
+
+
 @publish_app.command("run")
 def publish_run(brand_key: str) -> None:
-    """Rate-gate then publish at most one approved item to Instagram."""
-    from trendstealer.commands.publish import run_publish_once
-    from trendstealer.publish.base import DryRunPublisher
-    from trendstealer.publish.instagram import InstagramPublisher
-    from trendstealer.publish.upload import GRAPH_API_BASE
+    """Rate-gate then publish at most one approved item to Instagram.
+
+    This is what viral-publish.service calls. It has no override flag by
+    design -- the forced path is a separate command, so no edit to a unit
+    file can make a timer bypass the rate limiter.
+    """
+    from trendstealer.commands.publish import (
+        MissingCredentialsError,
+        build_publisher,
+        run_publish_once,
+    )
 
     settings = get_settings()
     app_config = load_app_config()
@@ -207,29 +284,11 @@ def publish_run(brand_key: str) -> None:
     conn = db.connect()
     brand_id = repo.upsert_brand(conn, brand_key, brand.brand.name)
 
-    access_token = brand.instagram_access_token()
-    business_account_id = brand.instagram_business_account_id()
-
-    publisher: DryRunPublisher | InstagramPublisher
-    if settings.publish_mode == "live":
-        if not access_token or not business_account_id:
-            typer.echo("IG_ACCESS_TOKEN / IG_BUSINESS_ACCOUNT_ID are not set", err=True)
-            raise typer.Exit(code=1)
-        graph_api_base = os.environ.get("TRENDSTEALER_GRAPH_API_BASE", GRAPH_API_BASE)
-        video_url_provider = None
-        if os.environ.get("TRENDSTEALER_PUBLISH_TUNNEL") == "cloudflared":
-            from trendstealer.publish.tunnel import serve_video_publicly
-
-            video_url_provider = serve_video_publicly
-        publisher = InstagramPublisher(
-            business_account_id=business_account_id,
-            graph_api_base=graph_api_base,
-            video_url_provider=video_url_provider,
-        )
-    else:
-        publisher = DryRunPublisher()
-        access_token = access_token or "dry-run"
-        business_account_id = business_account_id or "dry-run-account"
+    try:
+        publisher, access_token, business_account_id = build_publisher(settings, brand)
+    except MissingCredentialsError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
 
     account_id = repo.upsert_account(
         conn, brand_id=brand_id, platform="instagram", platform_account_id=business_account_id
@@ -246,10 +305,105 @@ def publish_run(brand_key: str) -> None:
     if outcome is None:
         typer.echo("nothing to publish this run")
     else:
-        typer.echo(
-            f"item {outcome.item_id}: {outcome.status}"
-            + (f" ({outcome.reason})" if outcome.reason else "")
+        _echo_outcome(outcome)
+
+
+@publish_app.command("now")
+def publish_now(
+    brand_key: str,
+    item_id: int | None = None,
+    yes: bool = False,
+) -> None:
+    """Publish an approved item immediately, skipping the rate limiter.
+
+    Bypasses the posting windows, the minimum gap, and the daily cap. The
+    review gate is untouched: only an `approved` item can go, preflight
+    still runs, and the idempotency key still prevents a double-post. The
+    bypass is recorded in status_events.
+    """
+    from trendstealer.commands.publish import (
+        ItemNotPublishableError,
+        MissingCredentialsError,
+        build_publisher,
+        run_publish_once,
+    )
+
+    settings = get_settings()
+    app_config = load_app_config()
+    brand = load_brand_config(brand_key, app_config=app_config)
+
+    conn = db.connect()
+    brand_id = repo.upsert_brand(conn, brand_key, brand.brand.name)
+
+    try:
+        publisher, access_token, business_account_id = build_publisher(settings, brand)
+    except MissingCredentialsError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    target = _describe_publish_target(conn, brand_id=brand_id, item_id=item_id)
+    if target is None:
+        typer.echo("nothing approved to publish", err=True)
+        raise typer.Exit(code=1)
+
+    mode = "LIVE post to" if settings.publish_mode == "live" else "dry-run against"
+    typer.echo(f"item {target.id}: {target.hook}")
+    typer.echo(f"  -> {mode} account {business_account_id}")
+    if not yes and not typer.confirm("publish it now, skipping the rate limiter?"):
+        typer.echo("aborted")
+        raise typer.Exit(code=1)
+
+    account_id = repo.upsert_account(
+        conn, brand_id=brand_id, platform="instagram", platform_account_id=business_account_id
+    )
+
+    try:
+        outcome = run_publish_once(
+            conn,
+            brand=brand,
+            brand_id=brand_id,
+            account_id=account_id,
+            publisher=publisher,
+            access_token=access_token,
+            enforce_rate_limit=False,
+            item_id=target.id,
+            actor="publisher:forced",
+            note="rate limiter bypassed via `publish now`",
         )
+    except ItemNotPublishableError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    if outcome is None:
+        typer.echo("nothing to publish", err=True)
+        raise typer.Exit(code=1)
+    _echo_outcome(outcome)
+
+
+class _PublishTarget(NamedTuple):
+    id: int
+    hook: str
+    status: str
+
+
+def _describe_publish_target(
+    conn: sqlite3.Connection, *, brand_id: int, item_id: int | None
+) -> _PublishTarget | None:
+    """The one-line summary shown before the confirmation prompt."""
+    if item_id is None:
+        approved = repo.list_approved_items(conn, brand_id=brand_id)
+        if not approved:
+            return None
+        item = approved[0]
+    else:
+        found = repo.get_content_item(conn, item_id)
+        if found is None:
+            return None
+        item = found
+
+    revision = repo.get_revision(conn, item["current_revision_id"])
+    hook = revision["on_screen_hook"] if revision else "(no revision)"
+    return _PublishTarget(id=item["id"], hook=hook, status=item["status"])
 
 
 @metrics_app.command("run")

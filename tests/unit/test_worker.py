@@ -110,6 +110,60 @@ def test_run_worker_once_returns_none_when_nothing_to_claim(
     assert result is None
 
 
+def test_worker_lock_refuses_a_concurrent_holder(tmp_path: Path) -> None:
+    """Both `worker run-once` (timer) and `generate now` (manual) take this
+    lock, so a hand-triggered render cannot land on top of a scheduled one."""
+    from trendstealer.commands.worker import WorkerBusyError, worker_lock
+
+    with worker_lock(tmp_path):
+        with pytest.raises(WorkerBusyError), worker_lock(tmp_path):
+            pass  # pragma: no cover - the body never runs
+
+
+def test_worker_lock_is_released_on_exit(tmp_path: Path) -> None:
+    from trendstealer.commands.worker import worker_lock
+
+    with worker_lock(tmp_path):
+        pass
+    with worker_lock(tmp_path):  # must not raise
+        pass
+
+
+def test_run_worker_once_can_target_a_specific_item(
+    conn: sqlite3.Connection, brand: BrandConfig, queued_item: int
+) -> None:
+    """`generate now --item-id` -- processes the named item rather than the
+    priority-ordered pick."""
+    claimed_id = run_worker_once(
+        conn,
+        brand=brand,
+        llm_backend=FixtureBackend(),
+        tts_backend=FakeTTSBackend(),
+        worker_id="test-worker",
+        item_id=queued_item,
+    )
+    assert claimed_id == queued_item
+    row = repo.get_content_item(conn, queued_item)
+    assert row["status"] == str(ContentStatus.PENDING_REVIEW)
+
+
+def test_run_worker_once_returns_none_for_an_unclaimable_target(
+    conn: sqlite3.Connection, brand: BrandConfig, queued_item: int
+) -> None:
+    """A non-claimable id must not silently fall through to claiming
+    whatever else happens to be queued."""
+    result = run_worker_once(
+        conn,
+        brand=brand,
+        llm_backend=FixtureBackend(),
+        tts_backend=FakeTTSBackend(),
+        worker_id="test-worker",
+        item_id=99999,
+    )
+    assert result is None
+    assert repo.get_content_item(conn, queued_item)["status"] == str(ContentStatus.QUEUED)
+
+
 def test_revision_loop_uses_change_request_and_bumps_revision_no(
     conn: sqlite3.Connection, brand: BrandConfig, queued_item: int
 ) -> None:

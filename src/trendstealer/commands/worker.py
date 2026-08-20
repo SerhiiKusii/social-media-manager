@@ -15,12 +15,17 @@ untouched.
 
 from __future__ import annotations
 
+import fcntl
+import os
+import socket
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from trendstealer import repo
 from trendstealer.captions import save_captions, transcribe_word_timings
-from trendstealer.config import REPO_ROOT, BrandConfig, get_settings
+from trendstealer.config import REPO_ROOT, AppConfig, BrandConfig, Settings, get_settings
 from trendstealer.intelligence.backend import LLMBackend
 from trendstealer.intelligence.feedback import format_hook_performance
 from trendstealer.intelligence.synthesize import synthesize
@@ -35,6 +40,46 @@ logger = get_logger(__name__)
 DEFAULT_PROMPT_VERSION = "hook_transfer_v1"
 
 
+class WorkerBusyError(RuntimeError):
+    """Another worker process holds the lock."""
+
+
+@contextmanager
+def worker_lock(var_dir: Path) -> Iterator[None]:
+    """Serialize CPU-bound render work across processes.
+
+    Both the timer-driven `worker run-once` and the manual `generate now`
+    take this, so a hand-triggered render cannot land on top of a scheduled
+    one and fight it for cores.
+    """
+    lock_dir = var_dir / "locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    with open(lock_dir / "worker.lock", "w") as lock_file:
+        try:
+            fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise WorkerBusyError("another worker run is already in progress") from exc
+        yield
+
+
+def build_backends(
+    settings: Settings, app_config: AppConfig
+) -> tuple[LLMBackend, TTSBackend, str]:
+    """The (llm, tts, worker_id) triple every worker entry point needs."""
+    from trendstealer.intelligence.synthesize import get_backend
+    from trendstealer.tts.piper import PiperBackend
+
+    llm_backend = get_backend(
+        settings.llm_backend,
+        model=app_config.intelligence.model,
+        max_tokens=app_config.intelligence.max_tokens,
+    )
+    tts_backend = PiperBackend(
+        target_lufs=app_config.tts.target_lufs, sample_rate_hz=app_config.tts.sample_rate_hz
+    )
+    return llm_backend, tts_backend, f"{socket.gethostname()}:{os.getpid()}"
+
+
 def run_worker_once(
     conn: sqlite3.Connection,
     *,
@@ -44,15 +89,25 @@ def run_worker_once(
     worker_id: str,
     lease_ttl_seconds: int = 600,
     prompt_version: str = DEFAULT_PROMPT_VERSION,
+    item_id: int | None = None,
 ) -> int | None:
     """Claim and fully process one item. Returns its id, or None if there
-    was nothing to claim."""
-    item = repo.claim_lease(conn, owner=worker_id, ttl_seconds=lease_ttl_seconds)
+    was nothing to claim.
+
+    `item_id` targets one specific item instead of the priority-ordered
+    pick, for `generate now --item-id`.
+    """
+    if item_id is not None:
+        item = repo.claim_lease_for_item(
+            conn, item_id, owner=worker_id, ttl_seconds=lease_ttl_seconds
+        )
+    else:
+        item = repo.claim_lease(conn, owner=worker_id, ttl_seconds=lease_ttl_seconds)
     if item is None:
         return None
 
-    item_id = item["id"]
-    logger.info("worker_claimed_item", item_id=item_id, status=item["status"])
+    claimed_id: int = item["id"]
+    logger.info("worker_claimed_item", item_id=claimed_id, status=item["status"])
     try:
         _process_item(
             conn,
@@ -63,8 +118,8 @@ def run_worker_once(
             prompt_version=prompt_version,
         )
     finally:
-        repo.release_lease(conn, item_id)
-    return item_id  # type: ignore[no-any-return]
+        repo.release_lease(conn, claimed_id)
+    return claimed_id
 
 
 def _process_item(

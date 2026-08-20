@@ -124,3 +124,43 @@ trendstealer status                            # content_items counts by status
 Every command that touches an external service defaults to the safe mode
 switch; nothing here spends money or posts live unless the corresponding
 `TRENDSTEALER_*_MODE` env var is set to `live`.
+
+## "Do it right now"
+
+The timers exist for unattended operation. When you want something to
+happen immediately, use these rather than editing `config/brands/*.toml`
+to loosen the gate — a loosened config is easy to leave in place, which
+silently disables rate limiting for the account.
+
+```bash
+trendstealer generate now <brand>              # ingest + render one item now
+trendstealer generate now <brand> --item-id 7  # re-render one specific item
+trendstealer publish now <brand>               # publish oldest approved, NOW
+trendstealer publish now <brand> --item-id 7 --yes
+```
+
+`generate now` prints the rendered MP4 path. It takes the same `flock` as
+the timer-driven worker, so it will refuse rather than fight a scheduled
+render for cores. With `TRENDSTEALER_APIFY_MODE=fixture` it will report
+"nothing to generate" once the recorded trends are used up — that is the
+fixture replaying itself, not a failure.
+
+`publish now` **skips the rate limiter entirely** — posting windows, the
+minimum gap, and the daily cap. It prompts before posting unless `--yes`.
+What it does *not* skip: only an `approved` item can publish, `preflight()`
+still enforces the AI-disclosure line and the asset licence check, and the
+publications idempotency key still makes a double-publish an
+`IntegrityError` rather than a second Reel.
+
+Every forced publish is recorded — `status_events.actor` is
+`publisher:forced` with a note naming the bypass:
+
+```bash
+sqlite3 var/db/trendstealer.db \
+  "SELECT content_item_id, actor, note FROM status_events
+   WHERE actor = 'publisher:forced' ORDER BY id DESC LIMIT 10;"
+```
+
+Note that `publish run` — what `viral-publish.service` invokes — has no
+override flag at all. The forced path is a separate command on purpose, so
+no edit to a unit file can make a timer bypass the rate limiter.

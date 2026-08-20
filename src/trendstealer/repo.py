@@ -275,6 +275,45 @@ def claim_lease(conn: sqlite3.Connection, *, owner: str, ttl_seconds: int) -> sq
     return cast("sqlite3.Row | None", claimed)
 
 
+def claim_lease_for_item(
+    conn: sqlite3.Connection, item_id: int, *, owner: str, ttl_seconds: int
+) -> sqlite3.Row | None:
+    """claim_lease() narrowed to one id, for `generate now --item-id`.
+
+    Returns None when that item is not claimable -- either its status is not
+    in WORKER_CLAIMABLE_STATES or another worker holds an unexpired lease on
+    it. The caller distinguishes the two by re-reading the row; the point of
+    returning None rather than raising is that "someone else is working it"
+    is a normal outcome, not an error.
+    """
+    placeholders = ",".join("?" for _ in WORKER_CLAIMABLE_STATES)
+    with transaction(conn):
+        row = conn.execute(
+            f"""
+            SELECT id FROM content_items
+            WHERE id = ?
+              AND status IN ({placeholders})
+              AND (lease_expires_at IS NULL
+                   OR lease_expires_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            """,
+            [item_id, *[str(s) for s in WORKER_CLAIMABLE_STATES]],
+        ).fetchone()
+        if row is None:
+            return None
+
+        conn.execute(
+            """
+            UPDATE content_items
+            SET lease_owner = ?,
+                lease_expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ? || ' seconds')
+            WHERE id = ?
+            """,
+            (owner, ttl_seconds, item_id),
+        )
+        claimed = conn.execute("SELECT * FROM content_items WHERE id = ?", (item_id,)).fetchone()
+    return cast("sqlite3.Row | None", claimed)
+
+
 def release_lease(conn: sqlite3.Connection, item_id: int) -> None:
     with transaction(conn):
         conn.execute(

@@ -102,3 +102,56 @@ def test_release_lease_clears_owner_and_expiry(
     assert row is not None
     assert row["lease_owner"] is None
     assert row["lease_expires_at"] is None
+
+
+# --- claim_lease_for_item (`generate now --item-id`) -------------------------
+
+
+def test_claim_for_item_takes_the_named_item_not_the_priority_pick(
+    conn: sqlite3.Connection, item_ids: dict[str, int]
+) -> None:
+    """claim_lease() would return the changes_requested item; naming an id
+    must override that ordering entirely."""
+    target = item_ids[str(ContentStatus.QUEUED)]
+    claimed = repo.claim_lease_for_item(conn, target, owner="w1", ttl_seconds=60)
+    assert claimed is not None
+    assert claimed["id"] == target
+    assert claimed["lease_owner"] == "w1"
+
+
+def test_claim_for_item_returns_none_for_a_non_claimable_status(
+    conn: sqlite3.Connection, item_ids: dict[str, int]
+) -> None:
+    item_id = item_ids[str(ContentStatus.CHANGES_REQUESTED)]
+    for edge in [
+        (ContentStatus.CHANGES_REQUESTED, ContentStatus.SYNTHESIZING),
+        (ContentStatus.SYNTHESIZING, ContentStatus.SCRIPT_READY),
+        (ContentStatus.SCRIPT_READY, ContentStatus.RENDERING),
+        (ContentStatus.RENDERING, ContentStatus.PENDING_REVIEW),
+        (ContentStatus.PENDING_REVIEW, ContentStatus.APPROVED),
+    ]:
+        repo.transition(conn, item_id, edge[0], edge[1], actor="t")
+
+    assert repo.claim_lease_for_item(conn, item_id, owner="w1", ttl_seconds=60) is None
+
+
+def test_claim_for_item_returns_none_while_another_worker_holds_it(
+    conn: sqlite3.Connection, item_ids: dict[str, int]
+) -> None:
+    target = item_ids[str(ContentStatus.QUEUED)]
+    assert repo.claim_lease_for_item(conn, target, owner="w1", ttl_seconds=600) is not None
+    assert repo.claim_lease_for_item(conn, target, owner="w2", ttl_seconds=600) is None
+
+
+def test_claim_for_item_reclaims_an_expired_lease(
+    conn: sqlite3.Connection, item_ids: dict[str, int]
+) -> None:
+    target = item_ids[str(ContentStatus.QUEUED)]
+    repo.claim_lease_for_item(conn, target, owner="w1", ttl_seconds=-1)
+    reclaimed = repo.claim_lease_for_item(conn, target, owner="w2", ttl_seconds=60)
+    assert reclaimed is not None
+    assert reclaimed["lease_owner"] == "w2"
+
+
+def test_claim_for_item_returns_none_for_a_missing_id(conn: sqlite3.Connection) -> None:
+    assert repo.claim_lease_for_item(conn, 99999, owner="w1", ttl_seconds=60) is None

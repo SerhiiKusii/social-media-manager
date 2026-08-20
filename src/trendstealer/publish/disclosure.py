@@ -13,6 +13,7 @@ documented operator step outside this codebase.
 from __future__ import annotations
 
 import shutil
+import sqlite3
 import subprocess
 from pathlib import Path
 
@@ -62,7 +63,30 @@ def try_embed_metadata(video_path: Path) -> bool:
     return DIGITAL_SOURCE_TYPE in result.stdout
 
 
-def preflight(*, video_path: Path, caption: str) -> None:
-    """Raises DisclosureError if this item is not safe to publish."""
+def preflight(
+    *,
+    video_path: Path,
+    caption: str,
+    conn: sqlite3.Connection | None = None,
+    revision_id: int | None = None,
+) -> None:
+    """Raises DisclosureError if this item is not safe to publish.
+
+    The asset-licence check is the backstop, not the first line of defence
+    -- the worker only ever selects cleared assets (see _select_broll). It
+    matters most for a forced publish, where the operator has deliberately
+    skipped the rate limiter and this is the last gate left standing.
+    """
     validate_disclosure(caption)
+
+    if conn is not None and revision_id is not None:
+        from trendstealer import repo
+
+        uncleared = repo.list_uncleared_assets_for_revision(conn, revision_id)
+        if uncleared:
+            paths = ", ".join(str(row["path"]) for row in uncleared)
+            raise DisclosureError(
+                f"revision {revision_id} contains asset(s) not cleared for commercial use: {paths}"
+            )
+
     try_embed_metadata(video_path)
