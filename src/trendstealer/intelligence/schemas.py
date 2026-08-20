@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ScriptPlan(BaseModel):
@@ -26,4 +26,19 @@ class ScriptPlan(BaseModel):
         ...,
         description="Short label for the retention structure used, e.g. 'problem-agitate-solve'",
     )
-    estimated_duration_secs: float = Field(..., gt=0)
+    # Deliberately a bare float, not Field(ge=...) / Field(gt=...): both
+    # exclusiveMinimum and inclusive minimum are rejected by Anthropic's
+    # structured-outputs strict schema mode ("property 'exclusiveMinimum'/
+    # 'minimum' is not supported") -- confirmed against the live API, not
+    # just docs. model_json_schema() is what gets sent as the response
+    # schema, so any Field() numeric bound here reproduces the 400. The
+    # positivity check instead runs client-side, after the API response is
+    # parsed, via the validator below -- which never touches the schema.
+    estimated_duration_secs: float
+
+    @field_validator("estimated_duration_secs")
+    @classmethod
+    def _duration_must_be_positive(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("estimated_duration_secs must be positive")
+        return value

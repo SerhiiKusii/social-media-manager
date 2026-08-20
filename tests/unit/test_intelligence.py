@@ -103,3 +103,42 @@ def test_render_prompt_omits_change_request_section_when_none() -> None:
     )
     rendered = render_prompt(request)
     assert "requested this change" not in rendered
+
+
+def test_script_plan_schema_has_no_numeric_bound_keywords() -> None:
+    """Anthropic's structured-outputs strict mode rejects numeric bound
+    keywords entirely -- confirmed against the live API with two separate
+    400s, first "property 'exclusiveMinimum' is not supported" (from
+    Field(gt=...)), then "property 'minimum' is not supported" even after
+    switching to Field(ge=...). Neither showed up against FixtureBackend,
+    since nothing validates the schema against the real API without a live
+    call. A Field(gt=/ge=/lt=/le=...) anywhere on this model would
+    reintroduce one of the two. Schema-only check, no network."""
+    schema = ScriptPlan.model_json_schema()
+    banned = {"exclusiveMinimum", "exclusiveMaximum", "minimum", "maximum"}
+
+    def _walk(node: object) -> None:
+        if isinstance(node, dict):
+            hit = banned & node.keys()
+            assert not hit, f"{hit} present in schema node: {node}"
+            for value in node.values():
+                _walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                _walk(item)
+
+    _walk(schema)
+
+
+def test_script_plan_still_rejects_a_non_positive_duration_after_parsing() -> None:
+    """The bound check moved out of the JSON schema (see above) and into a
+    field_validator, so it only runs client-side after the API response is
+    parsed -- confirm it still actually fires."""
+    with pytest.raises(ValueError, match="must be positive"):
+        ScriptPlan(
+            on_screen_hook="hook",
+            spoken_script="script",
+            caption="caption",
+            hook_pattern="problem-agitate-solve",
+            estimated_duration_secs=0.0,
+        )
