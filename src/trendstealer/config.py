@@ -203,6 +203,11 @@ class BrandPostingWindows(BaseModel):
 
 class BrandSources(BaseModel):
     tiktok_seed_accounts: list[str] = Field(default_factory=list)
+    # Accounts are the productive Instagram source: a profile reels scrape
+    # returns ~20 videos, while a hashtag reels scrape returns exactly one
+    # no matter what resultsLimit is set to (measured against the live
+    # actor). Hashtags are still supported and additive -- one reel each.
+    instagram_seed_accounts: list[str] = Field(default_factory=list)
     instagram_seed_hashtags: list[str] = Field(default_factory=list)
 
 

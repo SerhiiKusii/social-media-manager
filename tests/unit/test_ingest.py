@@ -256,8 +256,44 @@ def test_instagram_input_targets_reels_not_mixed_posts() -> None:
     assert run_input["resultsType"] == "reels"
 
 
-def test_instagram_input_is_none_without_configured_hashtags() -> None:
+def test_instagram_input_is_none_without_any_configured_source() -> None:
     assert _run_input_for("instagram", _brand_with_sources()) is None
+
+
+def test_instagram_input_builds_profile_urls_from_seed_accounts() -> None:
+    """Accounts are what produce volume: measured against the live actor, a
+    profile reels scrape returns ~20 videos while a hashtag reels scrape
+    returns exactly 1 regardless of resultsLimit. A hashtag-only config
+    yields one candidate per tag per run -- the same top reel every time,
+    which dedupe then rejects, so generation silently produces nothing."""
+    brand = _brand_with_sources(instagram_seed_accounts=["brfootball", "@433"])
+    run_input = _run_input_for("instagram", brand)
+    assert run_input is not None
+    assert run_input["directUrls"] == [
+        "https://www.instagram.com/brfootball/",
+        "https://www.instagram.com/433/",
+    ]
+
+
+def test_instagram_input_combines_accounts_and_hashtags() -> None:
+    brand = _brand_with_sources(
+        instagram_seed_accounts=["brfootball"], instagram_seed_hashtags=["football"]
+    )
+    run_input = _run_input_for("instagram", brand)
+    assert run_input is not None
+    assert run_input["directUrls"] == [
+        "https://www.instagram.com/brfootball/",
+        "https://www.instagram.com/explore/tags/football/",
+    ]
+
+
+def test_instagram_input_passes_a_results_limit() -> None:
+    """Unset, the actor defaults low; the run is also capped platform-side
+    by max_items, so this is the per-URL half of the same budget."""
+    brand = _brand_with_sources(instagram_seed_accounts=["brfootball"])
+    run_input = _run_input_for("instagram", brand, results_limit=60)
+    assert run_input is not None
+    assert run_input["resultsLimit"] == 60
 
 
 def test_tiktok_input_passes_seed_profiles() -> None:

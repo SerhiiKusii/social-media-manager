@@ -34,6 +34,98 @@ viral-publish.timer viral-metrics.timer viral-gc.timer viral-backup.timer`.
 Check status: `systemctl list-timers 'viral-*'` and `journalctl -u
 viral-worker.service -n 50`.
 
+### User-mode install (no root)
+
+`deploy/systemd/user/install.sh` renders the same unit files for
+`systemctl --user` -- no dedicated `trendstealer` user, no `/opt`, no
+root. It rewrites paths to point at the repo checkout and `.env`, and
+prints the enable commands rather than running them. Requires `make dev`
+and a filled-in `.env` first. User services stop at logout unless
+lingering is on (`loginctl show-user $USER | grep Linger`; enable with
+`loginctl enable-linger $USER`).
+
+Everywhere below, a system-wide install uses plain `systemctl` /
+`journalctl -u`; a user-mode install adds `--user` to both.
+
+## Verifying system state
+
+Two questions come up constantly: "is everything actually running?" and
+"is everything actually stopped?" Neither is answered by looking at one
+unit -- there are 5 timers, 2 long/short-running services, an OS-level
+lock file, and the DB's own notion of in-flight work. Check all of them.
+
+### Is everything running properly?
+
+```bash
+# 1. Every unit the deploy expects to be enabled is enabled, and none are failed.
+systemctl [--user] list-unit-files 'viral-*'      # *.timer should show `enabled` (all 5)
+systemctl [--user] list-timers 'viral-*'           # NEXT/LAST columns populated, nothing stuck
+systemctl [--user] list-units 'viral-*' --all      # ACTIVE/SUB for each -- no `failed`
+
+# 2. The dashboard is actually serving.
+systemctl [--user] status viral-review.service     # active (running)
+curl -sI http://127.0.0.1:${REVIEW_DASHBOARD_PORT:-5000}/   # any HTTP response, not connection-refused
+
+# 3. The app-level health check: DB reachable, schema current.
+trendstealer healthz                                # prints "ok" and exits 0
+
+# 4. No unit has been silently failing.
+systemctl [--user] list-units 'viral-*' --all --state=failed
+journalctl [--user] -u 'viral-*' -p err --since -24h --no-pager
+
+# 5. Work is actually flowing (not just that units *fire* -- that they *finish*).
+trendstealer status                                 # nothing stuck in synthesizing/rendering/publishing
+                                                      # for longer than a lease TTL (default 600s) plus a retry
+```
+
+If (5) shows an item stuck in `synthesizing` or `rendering` for a while,
+that's expected until the next `viral-worker.timer` tick reclaims the
+expired lease -- see "Common incidents" below before intervening by hand.
+
+### Is everything stopped?
+
+Stopping the timers is not enough on its own -- a run can already be
+in flight, and the worker lock/DB state outlive the unit that created
+them. Check all of these before assuming nothing will happen next:
+
+```bash
+# 1. Stop the timers (prevents new runs) and the dashboard.
+systemctl [--user] stop viral-ingest.timer viral-worker.timer \
+  viral-publish.timer viral-metrics.timer viral-gc.timer viral-backup.timer
+systemctl [--user] stop viral-review.service
+
+# To also prevent them from starting again on the next boot/login:
+systemctl [--user] disable viral-ingest.timer viral-worker.timer \
+  viral-publish.timer viral-metrics.timer viral-gc.timer viral-backup.timer viral-review.service
+
+# 2. Confirm no *.service triggered by a timer is still mid-run --
+#    `stop` on the *.timer does not kill an already-running *.service.
+systemctl [--user] list-units 'viral-*.service' --all   # every SUB should be `dead` or `exited`, none `running`
+# if one is still running:
+systemctl [--user] stop viral-<name>.service              # e.g. viral-worker.service, viral-publish.service
+
+# 3. Confirm the worker lock is free (held via flock on var/locks/worker.lock
+#    for the duration of a render -- killing the service releases it, but
+#    verify rather than assume if a process was killed forcefully).
+fuser var/locks/worker.lock 2>&1 || echo "lock free"
+lsof var/locks/worker.lock 2>&1 || echo "lock free"
+
+# 4. Confirm nothing is left mid-pipeline in the DB (expected to be empty,
+#    or only contain items you know are legitimately mid-flight).
+sqlite3 var/db/trendstealer.db \
+  "SELECT id, status FROM content_items WHERE status IN
+   ('synthesizing','rendering','publishing');"
+
+# 5. No stray trendstealer process outside systemd's control (a manual
+#    `generate now` / `publish now` run in a terminal isn't a unit and
+#    `systemctl stop` won't touch it).
+pgrep -af 'trendstealer (worker|publish|generate|ingest)'
+```
+
+`publish now` in particular is worth double-checking after a "stop
+everything" -- it bypasses the rate limiter, so if it's still running in
+a terminal somewhere, stopping the timers does nothing to it.
+
 ## First-time setup
 
 ```bash
@@ -46,6 +138,78 @@ trendstealer healthz          # exit 0 once the schema is current
 `TRENDSTEALER_PUBLISH_MODE` all default to their safe/offline value.
 Nothing calls a paid API or posts live until these are explicitly set to
 `live` in `/etc/trendstealer/env`.
+
+## Command reference
+
+Every subcommand the `trendstealer` CLI exposes (`src/trendstealer/cli.py`).
+All of them read config/env the same way the systemd units do, so they're
+safe to run ad hoc against the live DB.
+
+**Database**
+```bash
+trendstealer db upgrade                # apply pending migrations
+trendstealer db check                  # exit 1 if migrations are pending; applies nothing
+```
+
+**Brands**
+```bash
+trendstealer brands add <brand_key>    # register config/brands/<brand_key>.toml in the DB
+trendstealer brands list               # brands on disk + whether each is registered
+```
+
+**Top-level**
+```bash
+trendstealer status                    # content_items counts by pipeline status
+trendstealer healthz                   # exit 0 if DB is reachable and schema is current, else 1
+```
+
+**Review dashboard**
+```bash
+trendstealer review serve [--host H] [--port P]   # production WSGI server (waitress), needs REVIEW_DASHBOARD_TOKEN
+```
+
+**Ingest**
+```bash
+trendstealer ingest run <brand_key> [--dry-run]   # scrape + virality gate + dedupe, queue survivors
+```
+
+**Worker**
+```bash
+trendstealer worker run-once <brand_key>          # claim and fully process one item; no-op if nothing claimable
+```
+
+**Generate (manual, bypasses the worker timer)**
+```bash
+trendstealer generate now <brand_key> [--item-id N] [--skip-ingest]
+```
+
+**Publish**
+```bash
+trendstealer publish run <brand_key>                          # rate-gated, at most one item -- what the timer calls
+trendstealer publish now <brand_key> [--item-id N] [--yes]    # skips the rate limiter, still gated by review + preflight
+```
+
+**Metrics**
+```bash
+trendstealer metrics run <brand_key>   # snapshot IG insights for published items due a refresh
+```
+
+**Maintenance**
+```bash
+trendstealer maintenance gc [--max-pending-review-hours 48] [--retention-days 30]
+trendstealer maintenance backup [--keep-last 14]
+trendstealer maintenance check-token <brand_key> [--warn-days 7]
+```
+
+**Assets**
+```bash
+trendstealer assets fetch-pexels <query> [--count 5] [--tags ...]   # download + register cleared stock B-roll
+trendstealer assets add <path> [--kind video] [--license ...] [--tags ...] [--attribution ...] [--cleared]
+trendstealer assets list [--kind video] [--all-assets]              # least-recently-used first; cleared-only by default
+```
+
+Every command supports `--help` for the full flag list, including flags
+not spelled out above.
 
 ## Day-to-day: the review queue
 
@@ -113,16 +277,9 @@ adjust `--retention-days`.
 
 ## Manual one-offs
 
-```bash
-trendstealer ingest run <brand> --dry-run     # print what would be queued
-trendstealer worker run-once <brand>          # process exactly one item
-trendstealer publish run <brand>               # one rate-gated publish attempt
-trendstealer maintenance backup --keep-last 14
-trendstealer status                            # content_items counts by status
-```
-
-Every command that touches an external service defaults to the safe mode
-switch; nothing here spends money or posts live unless the corresponding
+See "Command reference" above for the full list. Every command that
+touches an external service defaults to the safe mode switch; nothing
+spends money or posts live unless the corresponding
 `TRENDSTEALER_*_MODE` env var is set to `live`.
 
 ## "Do it right now"

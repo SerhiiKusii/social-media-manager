@@ -30,7 +30,9 @@ class IngestSummary:
     items_skipped: int = 0
 
 
-def _run_input_for(platform: str, brand: BrandConfig) -> dict[str, object] | None:
+def _run_input_for(
+    platform: str, brand: BrandConfig, *, results_limit: int = 20
+) -> dict[str, object] | None:
     if platform == "tiktok":
         if not brand.sources.tiktok_seed_accounts:
             return None
@@ -40,8 +42,6 @@ def _run_input_for(platform: str, brand: BrandConfig) -> dict[str, object] | Non
             "shouldDownloadCovers": False,
         }
     if platform == "instagram":
-        if not brand.sources.instagram_seed_hashtags:
-            return None
         # apify/instagram-scraper has no "hashtags" input field -- its real
         # schema (checked against the live actor's default build) takes
         # either directUrls or a single search+searchType query. A prior
@@ -49,16 +49,31 @@ def _run_input_for(platform: str, brand: BrandConfig) -> dict[str, object] | Non
         # silently ignored as an unrecognized property: it ran successfully
         # and returned zero results every time, which read as "no trends
         # found" rather than "misconfigured".
+        #
+        # Accounts first, because they are what actually produces volume:
+        # measured against the live actor, a profile reels scrape returns
+        # ~20 videos while a hashtag reels scrape returns exactly 1, and
+        # raising resultsLimit does not change that. A hashtag-only config
+        # therefore yields one candidate per tag per run, which dedupe then
+        # rejects on the next run because it is the same top reel.
+        direct_urls = [
+            f"https://www.instagram.com/{account.lstrip('@')}/"
+            for account in brand.sources.instagram_seed_accounts
+        ] + [
+            f"https://www.instagram.com/explore/tags/{tag.lstrip('#')}/"
+            for tag in brand.sources.instagram_seed_hashtags
+        ]
+        if not direct_urls:
+            return None
         return {
-            "directUrls": [
-                f"https://www.instagram.com/explore/tags/{tag.lstrip('#')}/"
-                for tag in brand.sources.instagram_seed_hashtags
-            ],
+            "directUrls": direct_urls,
             # "posts" is a mixed feed (photos, carousels, reels); the
             # virality gate requires duration_secs, which photo posts never
-            # have, so "posts" silently discarded every non-video result.
-            # "reels" targets video content specifically.
+            # have, so "posts" silently discarded every non-video result --
+            # and even its videos come back without videoDuration. "reels"
+            # returns video only, with both views and duration populated.
             "resultsType": "reels",
+            "resultsLimit": max(1, results_limit),
         }
     raise ValueError(f"unknown platform: {platform}")
 
@@ -74,8 +89,9 @@ def run_ingest(
 ) -> IngestSummary:
     summary = IngestSummary()
 
+    max_items = app_config.virality.max_items_per_run * 20
     for platform in ("tiktok", "instagram"):
-        run_input = _run_input_for(platform, brand)
+        run_input = _run_input_for(platform, brand, results_limit=max_items)
         if run_input is None:
             continue
 
@@ -88,7 +104,7 @@ def run_ingest(
                 platform=platform,
                 actor_id=actor_id,
                 run_input=run_input,
-                max_items=app_config.virality.max_items_per_run * 20,
+                max_items=max_items,
                 timeout_secs=app_config.ingest.scrape_actor_timeout_secs,
             )
         except Exception as exc:  # noqa: BLE001 - recorded, then re-raised

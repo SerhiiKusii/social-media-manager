@@ -26,7 +26,11 @@ timezone = "Europe/Kyiv"
 # is replayed instead, so this placeholder is what lets the quickstart
 # produce queued items offline. Replace with real handles for live mode.
 tiktok_seed_accounts = ["testaccount"]
-instagram_seed_hashtags = ["footballtiktok", "footballskills", "football"]
+# Accounts are the productive Instagram source (~20 reels each per run).
+# Hashtags return exactly one reel each no matter the limit, so on their
+# own they produce the same top reel every run and dedupe rejects it.
+instagram_seed_accounts = ["brfootball", "433", "espnfc"]
+instagram_seed_hashtags = ["footballskills", "football"]
 
 [intro]
 # Branded lead-in prepended to every render. The image is picked from the
