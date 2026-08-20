@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -74,3 +75,37 @@ def test_brand_secret_falls_back_to_unsuffixed(monkeypatch: pytest.MonkeyPatch) 
 
 def test_list_brand_ids_includes_acme() -> None:
     assert "acme" in config.list_brand_ids()
+
+
+def test_dotenv_hydrates_os_environ_not_just_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """pydantic-settings' env_file= fills the Settings object but never
+    os.environ, and brand_secret()/the graph-host switches read os.environ
+    directly. Without hydration, `trendstealer publish` from a plain shell
+    saw publish_mode=live but no token -- and worse, silently defaulted the
+    Graph host and tunnel switches instead of erroring.
+    """
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("TRENDSTEALER_TEST_ONLY_KEY=from-dotenv\n")
+    monkeypatch.delenv("TRENDSTEALER_TEST_ONLY_KEY", raising=False)
+    monkeypatch.setattr(config, "DOTENV_PATH", dotenv)
+
+    config._hydrate_environ_from_dotenv()
+
+    assert os.environ["TRENDSTEALER_TEST_ONLY_KEY"] == "from-dotenv"
+
+
+def test_dotenv_never_overrides_a_real_environment_variable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """systemd units set these via EnvironmentFile=, and an explicit export
+    is a deliberate act a committed file must not undo."""
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("TRENDSTEALER_TEST_ONLY_KEY=from-dotenv\n")
+    monkeypatch.setenv("TRENDSTEALER_TEST_ONLY_KEY", "from-real-env")
+    monkeypatch.setattr(config, "DOTENV_PATH", dotenv)
+
+    config._hydrate_environ_from_dotenv()
+
+    assert os.environ["TRENDSTEALER_TEST_ONLY_KEY"] == "from-real-env"

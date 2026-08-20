@@ -11,13 +11,44 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = REPO_ROOT / "config"
+DOTENV_PATH = REPO_ROOT / ".env"
+
+
+def _hydrate_environ_from_dotenv() -> None:
+    """Copy .env into os.environ, without overriding what is already set.
+
+    pydantic-settings' env_file= populates the Settings object but never
+    os.environ, and several values are read straight from os.environ
+    instead: the per-brand secrets via brand_secret(), plus
+    TRENDSTEALER_GRAPH_API_BASE and TRENDSTEALER_PUBLISH_TUNNEL. Without
+    this, `trendstealer publish` from a plain shell saw publish_mode=live
+    (from Settings) but no token (from os.environ), and the two host/tunnel
+    switches silently fell back to their defaults -- pointing a
+    graph.instagram.com token at graph.facebook.com with no tunnel, which
+    fails much later and far less clearly than a missing-token message.
+
+    override=False so a real environment always wins: systemd units set
+    these via EnvironmentFile=, and an explicit `export` in a shell is a
+    deliberate act that a committed file should not undo.
+    """
+    from dotenv import load_dotenv
+
+    load_dotenv(DOTENV_PATH, override=False)
+
+
+_hydrate_environ_from_dotenv()
 
 
 class Settings(BaseSettings):
     """Env-derived settings. Secrets and mode switches only — non-secret
     tuning knobs live in config/app.toml and config/brands/*.toml."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    # Absolute path, not ".env": the CLI and systemd units run from
+    # different working directories, and a relative env_file silently
+    # resolves to nothing when cwd is not the repo root.
+    model_config = SettingsConfigDict(
+        env_file=DOTENV_PATH, env_file_encoding="utf-8", extra="ignore"
+    )
 
     apify_mode: Literal["fixture", "live"] = Field("fixture", alias="TRENDSTEALER_APIFY_MODE")
     llm_backend: Literal["fixture", "anthropic"] = Field(
