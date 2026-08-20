@@ -42,8 +42,16 @@ duration_secs = 5.0
 [broll]
 # Background footage tag. These are Pexels clips fetched via
 # `trendstealer assets fetch-pexels` -- never scraped video.
+# count is how many *distinct* clips are used; the renderer tiles them to
+# cover the whole body, so raising it buys variety rather than length.
 tag = "football"
-count = 1
+count = 3
+
+[script]
+# Target spoken length of the body voiceover, which drives the composition
+# duration -- so this is effectively the Reel's length minus the intro.
+min_secs = 15
+max_secs = 20
 
 [virality]
 # Overrides for config/app.toml [virality]; omit keys to inherit global default.

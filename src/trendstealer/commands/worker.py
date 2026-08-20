@@ -201,6 +201,8 @@ def _run_synthesis(
         change_request=change_request,
         hook_performance_note=hook_performance_note,
         prompt_version=prompt_version,
+        min_script_secs=brand.script.min_secs,
+        max_script_secs=brand.script.max_secs,
     )
     plan = result.script_plan
 

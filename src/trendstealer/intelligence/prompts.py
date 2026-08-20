@@ -28,4 +28,6 @@ def render_prompt(request: SynthesizeRequest) -> str:
         caption=request.caption or "",
         change_request_section=change_request_section,
         hook_performance_section=request.hook_performance_note or "",
+        min_script_secs=request.min_script_secs,
+        max_script_secs=request.max_script_secs,
     )

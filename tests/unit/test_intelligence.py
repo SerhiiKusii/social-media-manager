@@ -142,3 +142,26 @@ def test_script_plan_still_rejects_a_non_positive_duration_after_parsing() -> No
             hook_pattern="problem-agitate-solve",
             estimated_duration_secs=0.0,
         )
+
+
+def test_prompt_carries_the_configured_script_length() -> None:
+    """The prompt used to hardcode "20-45 seconds", which produced 36-42s
+    voiceovers -- long enough that the b-roll ran out and the picture froze
+    while the voice kept going."""
+    request = SynthesizeRequest(
+        brand_brief="Acme",
+        transcript=TRANSCRIPT,
+        prompt_version="hook_transfer_v1",
+        min_script_secs=15,
+        max_script_secs=20,
+    )
+    rendered = render_prompt(request)
+    assert "15-20 seconds" in rendered
+    assert "20-45 seconds" not in rendered
+
+
+def test_script_length_defaults_are_short_form() -> None:
+    request = SynthesizeRequest(
+        brand_brief="Acme", transcript=TRANSCRIPT, prompt_version="hook_transfer_v1"
+    )
+    assert (request.min_script_secs, request.max_script_secs) == (15, 20)

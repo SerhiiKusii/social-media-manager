@@ -19,6 +19,7 @@ from typing import Any
 
 from trendstealer.captions import WordTiming
 from trendstealer.config import REPO_ROOT, get_settings
+from trendstealer.mediatools import probe_duration_secs
 
 ASSETS_DIR = REPO_ROOT / "assets"
 VIDEO_RENDERER_DIR = REPO_ROOT / "video-renderer"
@@ -131,6 +132,12 @@ def stage_and_serialize(props: RenderProps) -> dict[str, Any]:
     broll_static = [
         _stage(p, staged_dir, f"broll_{i}{p.suffix}") for i, p in enumerate(props.broll_paths)
     ]
+    # Probed here rather than in the renderer: a stock clip is 6-10s while a
+    # body runs 20-40s, so the renderer has to tile the clips to fill the
+    # segment, and it can only work out how many repeats that takes if it
+    # knows how long each clip is. A clip whose duration can't be read is
+    # sent as 0 and treated as unloopable on the other side.
+    broll_durations = [probe_duration_secs(p) or 0.0 for p in props.broll_paths]
 
     intro_payload: dict[str, Any] | None = None
     if props.intro is not None:
@@ -156,5 +163,6 @@ def stage_and_serialize(props: RenderProps) -> dict[str, Any]:
         "brandName": props.brand_name,
         "palette": props.palette,
         "brollStaticPaths": broll_static,
+        "brollDurationsSecs": broll_durations,
         "intro": intro_payload,
     }

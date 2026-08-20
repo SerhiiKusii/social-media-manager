@@ -10,5 +10,6 @@
   "brandName": "Acme",
   "palette": ["#111111", "#F5F5F5", "#FF5A1F"],
   "brollStaticPaths": [],
+  "brollDurationsSecs": [],
   "intro": null
 }

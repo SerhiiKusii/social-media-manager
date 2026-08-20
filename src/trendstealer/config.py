@@ -194,10 +194,26 @@ class BrandIntro(BaseModel):
 
 
 class BrandBroll(BaseModel):
-    """Background footage selection. Empty tag means no b-roll (flat colour)."""
+    """Background footage selection. Empty tag means no b-roll (flat colour).
+
+    count is how many *distinct* clips are pulled, not how much runtime they
+    cover -- the renderer tiles them to fill the body regardless, so raising
+    this buys visual variety, not length.
+    """
 
     tag: str | None = None
     count: int = 1
+
+
+class BrandScript(BaseModel):
+    """Target spoken length of the body voiceover.
+
+    The voiceover drives the composition duration, so this is the main
+    control over how long the finished Reel runs (plus the intro).
+    """
+
+    min_secs: int = 15
+    max_secs: int = 20
 
 
 class BrandConfig(BaseModel):
@@ -207,6 +223,7 @@ class BrandConfig(BaseModel):
     sources: BrandSources = BrandSources()
     intro: BrandIntro = BrandIntro()
     broll: BrandBroll = BrandBroll()
+    script: BrandScript = BrandScript()
     virality: ViralityConfig
     publish: PublishConfig
 
@@ -247,6 +264,7 @@ def load_brand_config(brand_id: str, *, app_config: AppConfig | None = None) -> 
             "sources": raw.get("sources", {}),
             "intro": raw.get("intro", {}),
             "broll": raw.get("broll", {}),
+            "script": raw.get("script", {}),
             "virality": virality,
             "publish": publish,
         }

@@ -30,6 +30,11 @@ export const videoPropsSchema = z.object({
   brandName: z.string(),
   palette: z.array(z.string()),
   brollStaticPaths: z.array(z.string()).default([]),
+  // Parallel to brollStaticPaths. Needed because the clips (typically
+  // 6-10s) are shorter than the body (20-40s) and have to be tiled to fill
+  // it; without the clip length there is no way to know the repeat period.
+  // 0 means "duration unknown" -- that clip is shown once, not looped.
+  brollDurationsSecs: z.array(z.number().nonnegative()).default([]),
   intro: introSchema.nullable().default(null),
 });
 

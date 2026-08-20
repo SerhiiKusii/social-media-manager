@@ -6,6 +6,7 @@ import pytest
 from trendstealer.captions import WordTiming
 from trendstealer.config import get_settings
 from trendstealer.render.props import (
+    ASSETS_DIR,
     IntroProps,
     UnclearedAssetPathError,
     build_render_props,
@@ -77,6 +78,7 @@ def test_stage_and_serialize_copies_files_and_matches_golden_shape(tmp_path: Pat
         "brandName",
         "palette",
         "brollStaticPaths",
+        "brollDurationsSecs",
         "intro",
     }
     assert remotion_props["voiceoverStaticPath"] == f"generated/{item_id}-0/voice.wav"
@@ -152,3 +154,78 @@ def test_intro_media_outside_the_boundary_is_refused() -> None:
                 duration_secs=5.0,
             ),
         )
+
+
+def test_broll_durations_are_probed_and_emitted_alongside_the_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The renderer tiles b-roll to fill the body, which it can only do if
+    it knows how long each clip is -- clips run 6-10s against a 20-40s body.
+    Before this, footage played once and the picture froze for the rest."""
+    import trendstealer.render.props as props_module
+
+    item_id = 999994
+    work_dir = get_settings().var_dir_abs / "work" / str(item_id)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    (work_dir / "voice.wav").write_bytes(b"fake wav bytes")
+
+    broll = ASSETS_DIR / "video" / "test_probe_clip.mp4"
+    broll.parent.mkdir(parents=True, exist_ok=True)
+    broll.write_bytes(b"fake mp4 bytes")
+
+    monkeypatch.setattr(props_module, "probe_duration_secs", lambda _p: 7.25)
+    try:
+        props = build_render_props(
+            item_id=item_id,
+            revision_no=0,
+            on_screen_hook="hook",
+            captions=[],
+            voiceover_path=work_dir / "voice.wav",
+            duration_secs=30.0,
+            brand_name="Acme",
+            palette=[],
+            broll_paths=[broll],
+        )
+        payload = stage_and_serialize(props)
+    finally:
+        broll.unlink(missing_ok=True)
+
+    assert payload["brollDurationsSecs"] == [7.25]
+    assert len(payload["brollDurationsSecs"]) == len(payload["brollStaticPaths"])
+
+
+def test_unprobeable_broll_duration_serializes_as_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """0 is the renderer's "unknown, don't tile this" signal -- it must not
+    become null or be dropped, which would break the parallel-array
+    contract with brollStaticPaths."""
+    import trendstealer.render.props as props_module
+
+    item_id = 999993
+    work_dir = get_settings().var_dir_abs / "work" / str(item_id)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    (work_dir / "voice.wav").write_bytes(b"fake wav bytes")
+
+    broll = ASSETS_DIR / "video" / "test_unprobeable.mp4"
+    broll.parent.mkdir(parents=True, exist_ok=True)
+    broll.write_bytes(b"not really a video")
+
+    monkeypatch.setattr(props_module, "probe_duration_secs", lambda _p: None)
+    try:
+        props = build_render_props(
+            item_id=item_id,
+            revision_no=0,
+            on_screen_hook="hook",
+            captions=[],
+            voiceover_path=work_dir / "voice.wav",
+            duration_secs=30.0,
+            brand_name="Acme",
+            palette=[],
+            broll_paths=[broll],
+        )
+        payload = stage_and_serialize(props)
+    finally:
+        broll.unlink(missing_ok=True)
+
+    assert payload["brollDurationsSecs"] == [0.0]

@@ -1,5 +1,6 @@
 import React from "react";
 import { AbsoluteFill, Audio, OffthreadVideo, Sequence, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
+import { buildBrollSegments } from "./broll";
 import { Intro } from "./Intro";
 import type { VideoProps } from "./types";
 
@@ -10,9 +11,11 @@ const Body: React.FC<Omit<VideoProps, "intro">> = ({
   onScreenHook,
   captions,
   voiceoverStaticPath,
+  durationSecs,
   brandName,
   palette,
   brollStaticPaths,
+  brollDurationsSecs,
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -22,15 +25,29 @@ const Body: React.FC<Omit<VideoProps, "intro">> = ({
   const bg = palette[0] ?? "#111111";
   const fg = palette[1] ?? "#F5F5F5";
 
+  const bodyFrames = Math.max(1, Math.ceil(durationSecs * fps));
+  const brollSegments = buildBrollSegments(
+    brollStaticPaths,
+    brollDurationsSecs,
+    bodyFrames,
+    fps,
+  );
+
   return (
     <AbsoluteFill style={{ backgroundColor: bg }}>
-      {brollStaticPaths[0] ? (
-        <OffthreadVideo
-          src={staticFile(brollStaticPaths[0])}
-          style={{ width: "100%", height: "100%", objectFit: "cover", opacity: 0.6 }}
-          muted
-        />
-      ) : null}
+      {brollSegments.map((segment, i) => (
+        <Sequence
+          key={`broll-${i}`}
+          from={segment.from}
+          durationInFrames={segment.durationInFrames}
+        >
+          <OffthreadVideo
+            src={staticFile(segment.src)}
+            style={{ width: "100%", height: "100%", objectFit: "cover", opacity: 0.6 }}
+            muted
+          />
+        </Sequence>
+      ))}
 
       {voiceoverStaticPath ? <Audio src={staticFile(voiceoverStaticPath)} /> : null}
 

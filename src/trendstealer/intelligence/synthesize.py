@@ -28,6 +28,8 @@ def synthesize(
     change_request: str | None = None,
     hook_performance_note: str | None = None,
     prompt_version: str = DEFAULT_PROMPT_VERSION,
+    min_script_secs: int = 15,
+    max_script_secs: int = 20,
 ) -> SynthesizeResult:
     request = SynthesizeRequest(
         brand_brief=brand_brief,
@@ -36,5 +38,7 @@ def synthesize(
         prompt_version=prompt_version,
         change_request=change_request,
         hook_performance_note=hook_performance_note,
+        min_script_secs=min_script_secs,
+        max_script_secs=max_script_secs,
     )
     return backend.synthesize(request)

@@ -10,6 +10,7 @@
   "brandName": "Acme",
   "palette": ["#111111", "#F5F5F5", "#FF5A1F"],
   "brollStaticPaths": ["generated/1-0/broll_0.mp4"],
+  "brollDurationsSecs": [8.5],
   "intro": {
     "imageStaticPath": "generated/1-0/intro.png",
     "title": "Carlos approves",
