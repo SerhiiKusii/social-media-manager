@@ -147,7 +147,7 @@ def ingest_run(brand_key: str, dry_run: bool = False) -> None:
     )
     typer.echo(
         f"trends_seen={summary.trends_seen} items_new={summary.items_new} "
-        f"items_skipped={summary.items_skipped}"
+        f"items_backfilled={summary.items_backfilled} items_skipped={summary.items_skipped}"
     )
 
 
@@ -244,7 +244,11 @@ def generate_now(
             )
         else:
             typer.echo(
-                "nothing to generate: no queued items and ingest found no new trends", err=True
+                "nothing to generate: no queued items, and every trend the scrape returned "
+                "was already recorded. The seed accounts may not have posted anything new "
+                "since the last run -- check `trendstealer status` for items already awaiting "
+                "review.",
+                err=True,
             )
         raise typer.Exit(code=1)
 

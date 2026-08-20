@@ -231,6 +231,41 @@ def try_create_content_item(
         return None
 
 
+def list_unqueued_passing_trends(
+    conn: sqlite3.Connection, *, brand_id: int, limit: int
+) -> list[sqlite3.Row]:
+    """Gate-passing trends that never became content items, best first.
+
+    max_items_per_run caps how many survivors are queued per run; the rest
+    are recorded with skip_reason='ranked_below_top_n'. Dedupe layer 1
+    (UNIQUE(platform, platform_video_id)) then means a later run skips them
+    outright, so without this they are recorded once, never queued, and
+    never reconsidered -- good material, already scraped and transcribed,
+    permanently stranded.
+    """
+    rows = conn.execute(
+        """
+        SELECT t.* FROM trends t
+        LEFT JOIN content_items ci ON ci.trend_id = t.id AND ci.brand_id = ?
+        WHERE t.brand_id = ?
+          AND ci.id IS NULL
+          AND (t.skip_reason IS NULL OR t.skip_reason = 'ranked_below_top_n')
+          AND t.transcript IS NOT NULL
+          AND t.transcript != ''
+        ORDER BY t.virality_score DESC, t.id DESC
+        LIMIT ?
+        """,
+        (brand_id, brand_id, limit),
+    ).fetchall()
+    return list(rows)
+
+
+def clear_trend_skip_reason(conn: sqlite3.Connection, trend_id: int) -> None:
+    """A backfilled trend is no longer 'ranked_below_top_n' -- it was queued."""
+    with transaction(conn):
+        conn.execute("UPDATE trends SET skip_reason = NULL WHERE id = ?", (trend_id,))
+
+
 _CLAIM_PRIORITY_SQL = (
     "CASE status "
     + " ".join(f"WHEN '{status}' THEN {i}" for i, status in enumerate(WORKER_CLAIMABLE_STATES))

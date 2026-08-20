@@ -374,3 +374,126 @@ def test_run_ingest_is_idempotent_on_replay(
 
     assert second.trends_seen == 4
     assert second.items_new == 0  # natural-key dedupe: all already seen
+
+
+# --- backfill: the per-run cap must rate-limit, not discard ----------------
+
+
+def _passing_trend(
+    conn: sqlite3.Connection, brand_id: int, *, suffix: str, views: int, score: float
+) -> int:
+    return repo.insert_trend(
+        conn,
+        brand_id=brand_id,
+        scrape_run_id=None,
+        platform="instagram",
+        platform_video_id=f"vid-{suffix}",
+        source_account="acct",
+        source_url="https://x",
+        caption="cap",
+        transcript="a real transcript with enough words to be usable",
+        views=views,
+        likes=1,
+        comments=1,
+        shares=None,
+        source_follower_count=None,
+        duration_secs=20.0,
+        posted_at=None,
+        audio_id=None,
+        virality_score=score,
+        skip_reason="ranked_below_top_n",
+    )
+
+
+def test_backfill_queues_survivors_stranded_by_the_per_run_cap(
+    conn: sqlite3.Connection, relaxed_brand: BrandConfig
+) -> None:
+    """max_items_per_run caps how many survivors are queued; the overflow is
+    recorded with skip_reason='ranked_below_top_n' and then skipped forever
+    by dedupe layer 1. Without backfill those are stranded permanently --
+    already scraped, already transcribed, never usable."""
+    brand_id = repo.upsert_brand(conn, "acme", "Acme")
+    for i in range(5):
+        _passing_trend(conn, brand_id, suffix=str(i), views=1000 + i, score=float(i))
+
+    summary = run_ingest(
+        conn,
+        brand=relaxed_brand,
+        brand_id=brand_id,
+        app_config=AppConfig(),
+        backend=ApifyFixtureBackend(),
+    )
+
+    assert summary.items_backfilled > 0
+    queued = conn.execute(
+        "SELECT COUNT(*) n FROM content_items WHERE brand_id = ?", (brand_id,)
+    ).fetchone()["n"]
+    assert queued > 0
+
+
+def test_backfill_takes_the_highest_scoring_first(conn: sqlite3.Connection) -> None:
+    brand_id = repo.upsert_brand(conn, "acme", "Acme")
+    low = _passing_trend(conn, brand_id, suffix="low", views=100, score=1.0)
+    high = _passing_trend(conn, brand_id, suffix="high", views=900, score=99.0)
+
+    rows = repo.list_unqueued_passing_trends(conn, brand_id=brand_id, limit=1)
+    assert [r["id"] for r in rows] == [high]
+    assert low not in [r["id"] for r in rows]
+
+
+def test_backfill_never_reuses_a_trend_that_already_has_an_item(
+    conn: sqlite3.Connection,
+) -> None:
+    brand_id = repo.upsert_brand(conn, "acme", "Acme")
+    trend_id = _passing_trend(conn, brand_id, suffix="used", views=500, score=5.0)
+    repo.create_content_item(conn, brand_id=brand_id, trend_id=trend_id)
+
+    assert repo.list_unqueued_passing_trends(conn, brand_id=brand_id, limit=10) == []
+
+
+def test_backfill_ignores_trends_that_failed_the_gate(conn: sqlite3.Connection) -> None:
+    """Only 'ranked_below_top_n' (and un-skipped) trends are eligible -- a
+    trend rejected for low views must not be resurrected by the backfill."""
+    brand_id = repo.upsert_brand(conn, "acme", "Acme")
+    repo.insert_trend(
+        conn,
+        brand_id=brand_id,
+        scrape_run_id=None,
+        platform="instagram",
+        platform_video_id="vid-rejected",
+        transcript="a transcript",
+        views=10,
+        virality_score=0.1,
+        skip_reason="views_below_threshold",
+    )
+    assert repo.list_unqueued_passing_trends(conn, brand_id=brand_id, limit=10) == []
+
+
+def test_backfill_ignores_trends_with_no_transcript(conn: sqlite3.Connection) -> None:
+    brand_id = repo.upsert_brand(conn, "acme", "Acme")
+    repo.insert_trend(
+        conn,
+        brand_id=brand_id,
+        scrape_run_id=None,
+        platform="instagram",
+        platform_video_id="vid-notranscript",
+        transcript=None,
+        views=999_999,
+        virality_score=50.0,
+        skip_reason="ranked_below_top_n",
+    )
+    assert repo.list_unqueued_passing_trends(conn, brand_id=brand_id, limit=10) == []
+
+
+def test_backfilled_trend_no_longer_claims_it_was_ranked_below_top_n(
+    conn: sqlite3.Connection,
+) -> None:
+    """The skip_reason becomes untrue the moment the trend is queued; leaving
+    it would make the audit trail lie and re-offer the trend forever."""
+    brand_id = repo.upsert_brand(conn, "acme", "Acme")
+    trend_id = _passing_trend(conn, brand_id, suffix="promoted", views=500, score=5.0)
+
+    repo.clear_trend_skip_reason(conn, trend_id)
+
+    row = repo.get_trend(conn, trend_id)
+    assert row["skip_reason"] is None

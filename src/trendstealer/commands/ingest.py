@@ -28,6 +28,7 @@ class IngestSummary:
     trends_seen: int = 0
     items_new: int = 0
     items_skipped: int = 0
+    items_backfilled: int = 0
 
 
 def _run_input_for(
@@ -146,7 +147,50 @@ def run_ingest(
             compute_units=result.compute_units,
         )
 
+    if not dry_run:
+        _backfill_from_recorded_trends(
+            conn, brand_id=brand_id, app_config=app_config, summary=summary
+        )
+
     return summary
+
+
+def _backfill_from_recorded_trends(
+    conn: sqlite3.Connection,
+    *,
+    brand_id: int,
+    app_config: AppConfig,
+    summary: IngestSummary,
+) -> None:
+    """Top the run up to max_items_per_run from previously-recorded survivors.
+
+    Without this the per-run cap is lossy rather than just rate-limiting:
+    survivors beyond the cap are written with skip_reason='ranked_below_top_n',
+    and dedupe layer 1 makes every later run skip them before they are ever
+    reconsidered. In practice that meant a scrape could find a dozen
+    gate-passing reels with millions of views, queue three, and strand the
+    rest permanently -- while subsequent runs reported "no new trends"
+    because everything they found was already recorded.
+    """
+    shortfall = app_config.virality.max_items_per_run - summary.items_new
+    if shortfall <= 0:
+        return
+
+    for trend in repo.list_unqueued_passing_trends(conn, brand_id=brand_id, limit=shortfall):
+        item_id = repo.try_create_content_item(
+            conn, brand_id=brand_id, trend_id=trend["id"], initial_status=ContentStatus.QUEUED
+        )
+        if item_id is None:
+            continue
+        repo.clear_trend_skip_reason(conn, trend["id"])
+        summary.items_backfilled += 1
+        logger.info(
+            "trend_backfilled",
+            trend_id=trend["id"],
+            item_id=item_id,
+            views=trend["views"],
+            source_account=trend["source_account"],
+        )
 
 
 def _process_candidates(

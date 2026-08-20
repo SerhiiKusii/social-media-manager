@@ -29,7 +29,9 @@ tiktok_seed_accounts = ["testaccount"]
 # Accounts are the productive Instagram source (~20 reels each per run).
 # Hashtags return exactly one reel each no matter the limit, so on their
 # own they produce the same top reel every run and dedupe rejects it.
-instagram_seed_accounts = ["brfootball", "433", "espnfc"]
+# Verified against the live actor: 433 returns zero public reels, so it is
+# not listed here -- an account that yields nothing still costs a request.
+instagram_seed_accounts = ["brfootball", "espnfc", "tntsportsfootball"]
 instagram_seed_hashtags = ["footballskills", "football"]
 
 [intro]
