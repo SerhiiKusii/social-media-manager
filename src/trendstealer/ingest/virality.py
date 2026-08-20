@@ -36,12 +36,15 @@ def _numeric_reasons(candidate: TrendCandidate, config: ViralityConfig) -> list[
     if age_hours is None or age_hours > config.max_age_hours:
         reasons.append("too_old")
 
-    if candidate.views and candidate.source_follower_count:
-        vpf = candidate.views / candidate.source_follower_count
-    else:
-        vpf = None
-    if vpf is None or vpf < config.min_views_per_follower:
-        reasons.append("views_per_follower_below_threshold")
+    # Only scored when the source actually supplies follower counts (TikTok
+    # does; Instagram's hashtag/reels scrape does not, in the same call).
+    # Treating a structurally-missing count as a fail would hard-block every
+    # Instagram candidate regardless of real virality -- the other four
+    # numeric checks (views, age, engagement, duration) still gate it.
+    if candidate.source_follower_count:
+        vpf = (candidate.views or 0) / candidate.source_follower_count
+        if vpf < config.min_views_per_follower:
+            reasons.append("views_per_follower_below_threshold")
 
     engagement = _engagement_rate(candidate)
     if engagement is None or engagement < config.min_engagement_rate:

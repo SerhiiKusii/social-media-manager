@@ -42,10 +42,23 @@ def _run_input_for(platform: str, brand: BrandConfig) -> dict[str, object] | Non
     if platform == "instagram":
         if not brand.sources.instagram_seed_hashtags:
             return None
+        # apify/instagram-scraper has no "hashtags" input field -- its real
+        # schema (checked against the live actor's default build) takes
+        # either directUrls or a single search+searchType query. A prior
+        # version of this code passed "hashtags" directly, which the actor
+        # silently ignored as an unrecognized property: it ran successfully
+        # and returned zero results every time, which read as "no trends
+        # found" rather than "misconfigured".
         return {
-            "hashtags": brand.sources.instagram_seed_hashtags,
-            "resultsType": "posts",
-            "shouldDownloadVideos": False,
+            "directUrls": [
+                f"https://www.instagram.com/explore/tags/{tag.lstrip('#')}/"
+                for tag in brand.sources.instagram_seed_hashtags
+            ],
+            # "posts" is a mixed feed (photos, carousels, reels); the
+            # virality gate requires duration_secs, which photo posts never
+            # have, so "posts" silently discarded every non-video result.
+            # "reels" targets video content specifically.
+            "resultsType": "reels",
         }
     raise ValueError(f"unknown platform: {platform}")
 

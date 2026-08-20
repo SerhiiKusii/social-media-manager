@@ -17,7 +17,7 @@ instagram_business_account_id_env = "IG_BUSINESS_ACCOUNT_ID__ACME"
 [posting_windows]
 # 24h local time windows the publisher is allowed to post within.
 windows = ["09:00-11:00", "17:00-20:00"]
-timezone = "America/New_York"
+timezone = "Europe/Kyiv"
 
 [sources]
 # Accounts / hashtags to monitor for trend-jacking candidates.
@@ -26,7 +26,7 @@ timezone = "America/New_York"
 # is replayed instead, so this placeholder is what lets the quickstart
 # produce queued items offline. Replace with real handles for live mode.
 tiktok_seed_accounts = ["testaccount"]
-instagram_seed_hashtags = []
+instagram_seed_hashtags = ["footballtiktok", "footballskills", "football"]
 
 [intro]
 # Branded lead-in prepended to every render. The image is picked from the

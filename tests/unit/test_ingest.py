@@ -3,7 +3,7 @@ import sqlite3
 import pytest
 
 from trendstealer import repo
-from trendstealer.commands.ingest import run_ingest
+from trendstealer.commands.ingest import _run_input_for, run_ingest
 from trendstealer.config import (
     AppConfig,
     BrandConfig,
@@ -131,6 +131,7 @@ def _candidate(**overrides: object) -> TrendCandidate:
         ({"views": 99_999}, False),
         ({"views": 100_000}, True),
         ({"source_follower_count": 1_000_000}, False),  # vpf below threshold
+        ({"source_follower_count": None}, True),  # unavailable (Instagram) -- not penalized
         ({"likes": 0, "comments": 0, "shares": 0}, False),  # engagement below threshold
         ({"duration_secs": 5.0}, False),  # too short
         ({"duration_secs": 91.0}, False),  # too long
@@ -215,6 +216,59 @@ def test_audio_cooldown_false_for_unseen_audio(conn: sqlite3.Connection, brand_i
     assert not is_audio_in_cooldown(
         conn, brand_id=brand_id, audio_id="never-seen", cooldown_days=14
     )
+
+
+# --- _run_input_for -- the shape actually sent to each Apify actor ---------
+
+
+def _brand_with_sources(**source_kwargs: object) -> BrandConfig:
+    return BrandConfig(
+        brand=BrandIdentity(id="acme", name="Acme", product_brief="brief"),
+        sources=BrandSources(**source_kwargs),
+        virality=ViralityConfig(),
+        publish=PublishConfig(),
+    )
+
+
+def test_instagram_input_uses_directurls_not_a_hashtags_field() -> None:
+    """apify/instagram-scraper's real input schema has no "hashtags"
+    property -- only directUrls or a search+searchType query. Passing
+    "hashtags" is silently ignored by the actor (extra properties don't
+    error), so every live run would process zero URLs and report "no
+    trends found", indistinguishable from a quiet niche."""
+    brand = _brand_with_sources(instagram_seed_hashtags=["football", "#footballskills"])
+    run_input = _run_input_for("instagram", brand)
+    assert run_input is not None
+    assert "hashtags" not in run_input
+    assert run_input["directUrls"] == [
+        "https://www.instagram.com/explore/tags/football/",
+        "https://www.instagram.com/explore/tags/footballskills/",
+    ]
+
+
+def test_instagram_input_targets_reels_not_mixed_posts() -> None:
+    """resultsType="posts" returns photos and carousels too, and those
+    always fail the virality gate (duration_secs is required, photos have
+    none) -- so "posts" silently wasted every non-video result."""
+    brand = _brand_with_sources(instagram_seed_hashtags=["football"])
+    run_input = _run_input_for("instagram", brand)
+    assert run_input is not None
+    assert run_input["resultsType"] == "reels"
+
+
+def test_instagram_input_is_none_without_configured_hashtags() -> None:
+    assert _run_input_for("instagram", _brand_with_sources()) is None
+
+
+def test_tiktok_input_passes_seed_profiles() -> None:
+    brand = _brand_with_sources(tiktok_seed_accounts=["someaccount"])
+    run_input = _run_input_for("tiktok", brand)
+    assert run_input is not None
+    assert run_input["profiles"] == ["someaccount"]
+
+
+def test_tiktok_input_is_none_without_configured_accounts() -> None:
+    assert _run_input_for("tiktok", _brand_with_sources()) is None
 
 
 # --- run_ingest end to end (fixture backend, zero network) -----------------
