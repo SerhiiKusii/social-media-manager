@@ -23,6 +23,7 @@ Requires the cloudflared binary (see scripts/install-tools.sh or
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import socket
@@ -42,6 +43,14 @@ from trendstealer.logging import get_logger
 logger = get_logger(__name__)
 
 _TUNNEL_URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
+# api.trycloudflare.com is Cloudflare's control-plane endpoint, not a tunnel
+# hostname -- real quick-tunnel subdomains are random dictionary words and
+# never literally "api". cloudflared prints it in its own failure message
+# ("failed to request quick Tunnel: Post \"https://api.trycloudflare.com/tunnel\":
+# unexpected EOF"), which otherwise matches the regex above and gets mistaken
+# for a successfully assigned tunnel URL, sending the caller off to poll a
+# URL that was never going to work instead of surfacing the real failure.
+_CONTROL_PLANE_HOST = "api.trycloudflare.com"
 _TUNNEL_START_TIMEOUT_SECS = 30.0
 _REACHABLE_TIMEOUT_SECS = 90.0
 _REACHABLE_POLL_SECS = 3.0
@@ -68,6 +77,26 @@ def _find_cloudflared() -> str:
         "cloudflared not found (looked in .tools/cloudflared and PATH) -- "
         "see docs/RUNBOOK.md for install instructions"
     )
+
+
+def _cloudflared_env() -> dict[str, str]:
+    """cloudflared is a Go binary and negotiates HTTP/2 via ALPN by default
+    for its "request a quick tunnel" API call. On networks where something
+    in the path (a TLS-inspecting proxy/firewall) mangles HTTP/2 POST
+    bodies, that call fails with a bare "unexpected EOF" and no tunnel is
+    ever created -- plain HTTP/1.1 to the same endpoint works fine.
+    GODEBUG=http2client=0 is a Go-runtime knob that forces the HTTP/2
+    client off without needing a cloudflared rebuild or flag; it only
+    affects this control-plane call, not the tunnel's own data transport
+    (quic), so it's safe to set unconditionally rather than only on
+    networks known to need it.
+    """
+    env = dict(os.environ)
+    existing = env.get("GODEBUG", "")
+    settings = [s for s in existing.split(",") if s and not s.startswith("http2client=")]
+    settings.append("http2client=0")
+    env["GODEBUG"] = ",".join(settings)
+    return env
 
 
 def _parse_range(header: str, size: int) -> tuple[int, int] | None:
@@ -226,6 +255,7 @@ def serve_video_publicly(video_path: Path) -> Iterator[str]:
         stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,
+        env=_cloudflared_env(),
     )
     try:
         public_base = _wait_for_tunnel_url(proc)
@@ -253,6 +283,8 @@ def _wait_for_tunnel_url(proc: subprocess.Popen[str]) -> str:
                 raise TunnelError(f"cloudflared exited early (code {proc.returncode})")
             continue
         match = _TUNNEL_URL_RE.search(line)
-        if match:
+        if match and match.group(0) != f"https://{_CONTROL_PLANE_HOST}":
             return match.group(0)
+        if _CONTROL_PLANE_HOST in line and ("failed" in line or "error" in line.lower()):
+            raise TunnelError(f"cloudflared failed to create a quick tunnel: {line.strip()}")
     raise TunnelError("timed out waiting for cloudflared to print a tunnel URL")

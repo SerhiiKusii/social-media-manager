@@ -17,7 +17,12 @@ from pathlib import Path
 
 import pytest
 
-from trendstealer.publish.tunnel import _parse_range, _single_file_handler
+from trendstealer.publish.tunnel import (
+    TunnelError,
+    _parse_range,
+    _single_file_handler,
+    _wait_for_tunnel_url,
+)
 
 CONTENT = bytes(range(256)) * 40  # 10240 bytes
 
@@ -110,3 +115,51 @@ def test_query_string_does_not_defeat_the_path_match(server: tuple[str, int]) ->
     status, _, body = _request(server, "GET", "/out_r0.mp4?cachebust=1")
     assert status == 200
     assert body == CONTENT
+
+
+class _FakeProc:
+    """Stands in for subprocess.Popen[str]: readline() yields queued lines,
+    then behaves like a still-running or exited process."""
+
+    def __init__(self, lines: list[str], *, exit_code: int | None = None) -> None:
+        self._lines = list(lines)
+        self.returncode = exit_code
+
+    def poll(self) -> int | None:
+        return self.returncode if not self._lines else None
+
+    @property
+    def stdout(self) -> "_FakeProc":
+        return self
+
+    def readline(self) -> str:
+        return self._lines.pop(0) if self._lines else ""
+
+
+def test_wait_for_tunnel_url_ignores_the_control_plane_host_in_a_failure_line() -> None:
+    """Regression test: cloudflared's own error message for a failed quick-
+    tunnel request embeds https://api.trycloudflare.com, which matches the
+    tunnel-URL regex just like a real assigned subdomain would. That must
+    not be mistaken for a successful tunnel -- it previously was, sending
+    the caller off to poll a URL that could never work instead of surfacing
+    cloudflared's actual failure."""
+    proc = _FakeProc(
+        [
+            "INF Requesting new quick Tunnel on trycloudflare.com...\n",
+            'failed to request quick Tunnel: Post "https://api.trycloudflare.com/tunnel":'
+            " unexpected EOF\n",
+        ],
+        exit_code=1,
+    )
+    with pytest.raises(TunnelError, match="cloudflared failed to create a quick tunnel"):
+        _wait_for_tunnel_url(proc)  # type: ignore[arg-type]
+
+
+def test_wait_for_tunnel_url_returns_a_real_assigned_subdomain() -> None:
+    proc = _FakeProc(
+        [
+            "INF Requesting new quick Tunnel on trycloudflare.com...\n",
+            "|  https://random-words-here.trycloudflare.com  |\n",
+        ]
+    )
+    assert _wait_for_tunnel_url(proc) == "https://random-words-here.trycloudflare.com"  # type: ignore[arg-type]
